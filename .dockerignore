@@ -1,0 +1,10 @@
+.git
+.agents
+.codex
+.claude
+.env
+logs
+uploads
+tmp
+coverage.out
+web/node_modules

@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chat Proj</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <section id="authView" class="auth-view">
+      <div class="auth-card">
+        <div class="brand">
+          <h1>Chat Proj</h1>
+          <p id="authTitle">登录</p>
+        </div>
+
+        <label class="base-url">
+          后端地址
+          <input id="baseUrl" value="http://localhost:8080" />
+        </label>
+
+        <form id="loginForm" class="auth-form">
+          <label>邮箱<input name="email" type="email" value="alice@example.com" autocomplete="username" /></label>
+          <label>密码<input name="password" type="password" value="password123" autocomplete="current-password" /></label>
+          <button type="submit">登录</button>
+          <p class="auth-switch">没有账号？<a id="showRegisterLink" href="#">立即注册</a></p>
+        </form>
+
+        <form id="registerForm" class="auth-form hidden">
+          <label>邮箱<input name="email" type="email" value="bob@example.com" autocomplete="username" /></label>
+          <label>密码<input name="password" type="password" value="password123" autocomplete="new-password" /></label>
+          <label>昵称<input name="nickname" value="Bob" /></label>
+          <button type="submit">注册</button>
+          <p class="auth-switch">已有账号？<a id="showLoginLink" href="#">返回登录</a></p>
+          <div id="registerResult" class="result-line"></div>
+        </form>
+      </div>
+    </section>
+
+    <section id="chatView" class="qq-layout hidden">
+      <!-- ====== 左侧面板 ====== -->
+      <aside class="left-panel">
+        <div class="user-profile">
+          <button class="avatar profile-avatar" id="userAvatar" type="button" title="修改头像" aria-label="修改头像"></button>
+          <input id="avatarFileInput" class="hidden" type="file" accept="image/*" />
+          <div class="user-text">
+            <strong id="accountEmail" class="user-name">已登录</strong>
+            <span id="wsState" class="user-status offline">离线</span>
+          </div>
+        </div>
+
+        <div class="search-area">
+          <input id="searchInput" class="search-input" type="text" placeholder="搜索" />
+        </div>
+
+        <div class="tab-bar">
+          <button class="tab-btn active" data-tab="messages">消息</button>
+          <button class="tab-btn" data-tab="friends">好友</button>
+          <button class="tab-btn" data-tab="groups">群组</button>
+        </div>
+
+        <div class="list-area">
+          <!-- 消息 tab -->
+          <div class="tab-content active" id="messagesTab">
+            <div id="sessionList" class="session-list empty">暂无会话</div>
+          </div>
+
+          <!-- 好友 tab -->
+          <div class="tab-content" id="friendsTab">
+            <form id="addFriendForm" class="inline-form">
+              <input name="friendEmail" type="email" placeholder="输入邮箱添加好友" />
+              <button type="submit">添加</button>
+            </form>
+            <details class="fold-list">
+              <summary>待处理好友申请</summary>
+              <div id="pendingList" class="mini-list empty">暂无申请</div>
+            </details>
+            <div class="section-label">我的好友</div>
+            <div id="friendList" class="mini-list empty">暂无好友</div>
+          </div>
+
+          <!-- 群组 tab -->
+          <div class="tab-content" id="groupsTab">
+            <form id="createGroupForm" class="inline-form">
+              <input name="name" placeholder="新群名称" />
+              <button type="submit">建群</button>
+            </form>
+            <form id="joinGroupForm" class="inline-form">
+              <input name="groupID" type="number" placeholder="群 ID" />
+              <button type="submit">加群</button>
+            </form>
+            <details class="fold-list">
+              <summary>入群审批</summary>
+              <button id="refreshGroupJoinRequestsBtn" class="inline-btn" type="button">刷新申请</button>
+              <div id="groupJoinRequestList" class="mini-list empty">暂无申请</div>
+            </details>
+            <div class="section-label">我的群组</div>
+            <div id="groupList" class="mini-list empty">暂无群</div>
+          </div>
+        </div>
+
+        <button id="logoutBtn" class="logout-btn" type="button">退出登录</button>
+      </aside>
+
+      <!-- ====== 右侧聊天区 ====== -->
+      <main class="chat-pane">
+        <header class="chat-header">
+          <div class="chat-header-info">
+            <h1 id="chatTitle">选择一个会话</h1>
+            <p id="chatSubtitle">登录后 WebSocket 自动连接。</p>
+          </div>
+          <div class="chat-header-actions">
+            <button id="groupMembersBtn" class="hidden" type="button">群成员</button>
+          </div>
+        </header>
+
+        <div class="chat-body">
+          <div id="messageList" class="message-list">
+            <div class="empty-state">左侧选择会话后开始聊天。</div>
+          </div>
+          <aside id="memberPanel" class="member-panel hidden">
+            <div class="member-panel-head">
+              <h2>群成员</h2>
+              <button id="closeMemberPanelBtn" type="button">关闭</button>
+            </div>
+            <div id="memberList" class="member-list empty">暂无成员</div>
+          </aside>
+        </div>
+
+        <div class="toolbar">
+          <button class="tool-btn" id="emojiBtn" type="button" title="表情">😊</button>
+          <button class="tool-btn" id="imageBtn" type="button" title="图片">🖼</button>
+          <button class="tool-btn" id="fileBtn" type="button" title="文件">📎</button>
+          <input id="imageFileInput" class="hidden" type="file" accept="image/*" />
+          <input id="chatFileInput" class="hidden" type="file" />
+        </div>
+
+        <div id="uploadProgress" class="upload-progress hidden">
+          <div class="upload-progress-info">
+            <span id="uploadFileName" class="upload-file-name"></span>
+            <span id="uploadPercent" class="upload-percent">0%</span>
+          </div>
+          <div class="upload-bar"><span id="uploadBar"></span></div>
+          <button id="cancelUploadBtn" type="button">取消</button>
+        </div>
+
+        <form id="messageForm" class="composer">
+          <textarea id="messageInput" rows="3" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+          <button type="submit">发送</button>
+        </form>
+
+        <details class="debug-panel">
+          <summary>调试日志</summary>
+          <button id="clearLogBtn" type="button">清空日志</button>
+          <pre id="logOutput"></pre>
+        </details>
+      </main>
+    </section>
+
+    <script type="module" src="./app.js?v=upload-progress-1"></script>
+  </body>
+</html>

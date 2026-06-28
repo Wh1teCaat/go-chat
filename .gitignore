@@ -1,0 +1,6 @@
+uploads/
+logs/
+.env
+coverage.out
+web/node_modules/
+configs/config.toml

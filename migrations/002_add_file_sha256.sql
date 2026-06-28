@@ -1,0 +1,5 @@
+-- +goose Up
+ALTER TABLE files ADD COLUMN IF NOT EXISTS sha256 varchar(64) NOT NULL DEFAULT '';
+
+-- +goose Down
+ALTER TABLE files DROP COLUMN IF EXISTS sha256;
