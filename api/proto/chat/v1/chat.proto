@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package chat.v1;
+
+option go_package = "chat_proj/internal/rpc/chatpb";
+
+// ChatService 是 gateway → chat-logic 的内部 RPC 面。
+// gateway 只做 WebSocket 接入和 ACK 回写；消息校验、落库、推送编排都在 logic。
+service ChatService {
+  // SendMessage 处理一条会话消息：成员校验 → 幂等去重 → 落库 → 经消息总线推送。
+  // 返回值只包含 gateway 回 ACK 所需的字段；消息本体由 logic 通过总线广播，
+  // gateway 的订阅端负责投递给本地连接。
+  rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+}
+
+message SendMessageRequest {
+  // sender_id 由 gateway 从已验证的 JWT 中取出，logic 信任该值（内网服务间调用）。
+  uint64 sender_id = 1;
+  string client_msg_id = 2;
+  // target_type: "private" 或 "group"，与 WS 协议保持一致。
+  string target_type = 3;
+  uint64 target_id = 4;
+  string content = 5;
+}
+
+message SendMessageResponse {
+  uint64 message_id = 1;
+  // created_at 使用 RFC3339，与 REST/WS 时间格式一致。
+  string created_at = 2;
+  string client_msg_id = 3;
+  // duplicate 表示这次是幂等去重命中（客户端重发），gateway 只需重发 ACK。
+  bool duplicate = 4;
+}

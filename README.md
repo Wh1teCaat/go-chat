@@ -8,31 +8,38 @@
 - 认证：JWT access token + refresh token。refresh token 带 jti，服务端用 Redis allowlist 管理（无 Redis 时退回内存）；每次刷新轮换并吊销旧 token，重放返回 401；`/v1/user/logout` 吊销 refresh token。WebSocket 通过 `Sec-WebSocket-Protocol` 的 `bearer.<token>` 条目认证，token 不进 URL。前端会在 access token 过期前主动刷新，接口遇到 401 时也会自动刷新后重试。
 - 实时消息：Gorilla WebSocket。客户端发消息后服务端落库并返回 `message_ack`，前端据此展示发送中/已发送/发送失败/已读状态。`clientMsgID` 参与服务端幂等去重（`(sender_id, client_msg_id)` 唯一索引），ACK 丢失重发不会重复落库。消息本体推送给接收方和发送者的全部连接（多标签页/多设备同步），推送带接收端视角的 `targetType`/`targetID`。前端断线后指数退避自动重连，重连成功用 `afterMessageID` 增量补拉断线期间的消息。
 - 多实例：推送经 `internal/wsbus` 总线路由——启用 Redis 时走 Pub/Sub 全局频道广播，每个实例只投递本地在线用户，支持多实例水平扩展；无 Redis 时退化为进程内直投。ACK/错误只对发起连接有意义，始终本地直投。设计取舍见 [docs/design/01-multi-instance-ws.md](docs/design/01-multi-instance-ws.md)。
+- 服务拆分：支持三种部署形态，共用同一镜像——单体（`cmd/`，本地开发可无 Redis）；拆分部署 `chat-gateway`（WS 接入层，无状态、按连接数扩容）+ `chat-logic`（REST + 业务，按 QPS 扩容），两者以 gRPC 通信（`api/proto/chat/v1`），入口由 nginx edge 按路径分流，前端不感知拆分。拆分边界与 RPC 面设计见 [docs/design/02-gateway-logic-split.md](docs/design/02-gateway-logic-split.md)。
 - 缓存：Redis 可选开启；当前用于限流计数、用户资料缓存、群资料缓存、在线状态和 refresh token allowlist，Redis 不可用时退回内存实现。
 - 运维：`GET /health` 健康检查（数据库不可用返回 503）；收到 SIGINT/SIGTERM 后优雅停机（停止监听、等待存量请求、关闭全部 WebSocket 连接）。
 - 文件：默认使用本地存储 `uploads/`；头像可通过 `/uploads/...` 公开访问，聊天附件必须走 `/v1/file/:id/download` 鉴权下载，普通附件支持图片、PDF、Word、TXT 和 ZIP。
 - 前端：`web/` 是静态测试页，默认请求 `http://localhost:8080`，页面端口固定为 `5173`。
 
+拆分部署形态（docker compose 默认）：
+
 ```mermaid
 flowchart LR
-    Browser["静态前端 web/"] -->|REST| Gin["Gin API"]
-    Browser <-->|WebSocket| WSHub["WebSocket Hub"]
-    Gin --> Service["Service 层"]
-    WSHub --> Service
-    Service --> Repo["Repository"]
-    Repo --> PG[("PostgreSQL")]
-    Service --> Redis[("Redis")]
-    Service --> Storage["Storage 接口"]
-    Storage --> Local[("本地 uploads/")]
-    Gin --> Goose["goose migrations"]
-    Goose --> PG
-    WSHub <-->|"wsbus Pub/Sub 广播（多实例路由）"| Redis
+    Browser["静态前端 web/"] -->|"REST + WS（单一地址）"| Edge["edge (nginx)"]
+    Edge -->|REST| Logic["chat-logic<br/>Gin + Service + Repo"]
+    Edge <-->|WebSocket| GW["chat-gateway<br/>Hub + 认证 + ACK"]
+    GW -->|gRPC SendMessage| Logic
+    Logic --> PG[("PostgreSQL")]
+    Logic -->|"缓存/限流/token"| Redis[("Redis")]
+    Logic -->|"wsbus 发布"| Redis
+    Redis -->|"wsbus 订阅投递"| GW
+    Logic --> Storage["Storage 接口"] --> Local[("本地 uploads/")]
+    Logic --> Goose["goose migrations"] --> PG
 ```
+
+单体形态（`cmd/`）：同一套 internal 代码在一个进程内直连，WS 推送退化为进程内直投。
 
 ## 目录结构
 
 ```text
-cmd/                  程序入口，负责初始化配置、数据库、Redis、存储和路由
+api/proto/            gRPC proto 定义（gateway ↔ chat-logic）
+cmd/                  单体入口：一个进程承载全部能力，本地开发默认形态
+cmd/gateway/          拆分部署：WebSocket 接入层（认证、连接、ACK、总线订阅投递）
+cmd/logic/            拆分部署：业务层（REST + gRPC + 落库/推送编排，总线发布）
+deploy/               入口代理等部署配置
 configs/              默认 TOML 配置；本地复制 config.example.toml 为 config.toml，Docker 用 config.docker.toml
 internal/auth/        JWT 生成与校验
 internal/cache/       Redis 客户端、缓存 Store 和缓存 key 定义
@@ -45,6 +52,8 @@ internal/repository/  数据库访问层
 internal/router/      路由注册
 internal/service/     业务逻辑
 internal/storage/     文件存储抽象和本地磁盘实现；后续可扩展 MinIO/OSS
+internal/gateway/     gateway 服务的 WS 处理器（gRPC 转发 + 本地 ACK/error）
+internal/rpc/chatpb/  protoc 生成的 gRPC 代码
 internal/ws/          WebSocket Hub 和连接生命周期
 internal/wsbus/       跨实例推送总线：进程内直投 / Redis Pub/Sub 广播
 migrations/           goose SQL migrations，服务启动时自动执行
@@ -63,11 +72,17 @@ docker compose up --build
 启动后访问：
 
 - 前端：`http://localhost:5173`
-- 后端：`http://localhost:8080`
+- 后端入口（edge 代理）：`http://localhost:8080`
 - PostgreSQL：`localhost:5432`
 - Redis：`localhost:6379`
 
-Compose 会启动 PostgreSQL、Redis、后端和前端。后端容器会把 `configs/config.docker.toml` 挂载成容器内的 `configs/config.toml`，所以数据库地址使用 `postgres`，Redis 地址使用 `redis:6379`。
+Compose 以**拆分形态**启动：PostgreSQL、Redis、`chat-logic`（REST + gRPC）、`chat-gateway`（WS 接入）、`edge`（nginx 入口代理，`/v1/ws` 分流到 gateway、其余到 logic）和前端。前端仍然只面对 `localhost:8080` 一个地址。gateway 可水平扩容：
+
+```bash
+docker compose up -d --scale gateway=2 && docker compose restart edge
+```
+
+后端容器会把 `configs/config.docker.toml` 挂载成容器内的 `configs/config.toml`，所以数据库地址使用 `postgres`，Redis 地址使用 `redis:6379`，gateway 通过 `logic:9090` 连 logic 的 gRPC。
 
 停止服务：
 
@@ -89,10 +104,17 @@ docker compose down -v
 cp configs/config.example.toml configs/config.toml
 ```
 
-然后启动后端：
+然后启动后端（单体形态，功能完整，无 Redis 也能跑）：
 
 ```bash
 go run ./cmd
+```
+
+或以拆分形态启动（需要 Redis，先起 logic 再起 gateway；WS 需连 `:8081`，可用本地 nginx 或改前端 WS 地址）：
+
+```bash
+go run ./cmd/logic     # REST :8080 + gRPC :9090
+go run ./cmd/gateway   # WS :8081
 ```
 
 启动前端：

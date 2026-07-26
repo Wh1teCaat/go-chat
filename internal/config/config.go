@@ -16,6 +16,25 @@ type Config struct {
 	CORS      CORSConfig      `mapstructure:"cors"`
 	Redis     RedisConfig     `mapstructure:"redis"`
 	RateLimit RateLimitConfig `mapstructure:"rate_limit"`
+	GRPC      GRPCConfig      `mapstructure:"grpc"`
+	Gateway   GatewayConfig   `mapstructure:"gateway"`
+}
+
+// GRPCConfig 是 chat-logic 的 gRPC 监听配置（拆分部署时使用）。
+type GRPCConfig struct {
+	Addr string `mapstructure:"addr"`
+}
+
+// GatewayConfig 是 gateway 服务的配置（拆分部署时使用）。
+type GatewayConfig struct {
+	Host string `mapstructure:"host"`
+	Port int    `mapstructure:"port"`
+	// LogicAddr 是 chat-logic 的 gRPC 地址。
+	LogicAddr string `mapstructure:"logic_addr"`
+}
+
+func (g GatewayConfig) Address() string {
+	return fmt.Sprintf("%s:%d", g.Host, g.Port)
 }
 
 type LogConfig struct {
@@ -105,6 +124,10 @@ func Load() (*Config, error) {
 	v.SetDefault("rate_limit.enabled", true)
 	v.SetDefault("rate_limit.requests", 120)
 	v.SetDefault("rate_limit.window_seconds", 60)
+	v.SetDefault("grpc.addr", "0.0.0.0:9090")
+	v.SetDefault("gateway.host", "0.0.0.0")
+	v.SetDefault("gateway.port", 8081)
+	v.SetDefault("gateway.logic_addr", "127.0.0.1:9090")
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {

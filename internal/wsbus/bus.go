@@ -62,6 +62,13 @@ type RedisBus struct {
 	sub    *redis.PubSub
 }
 
+// NewRedisPublisher 只发布、不订阅，用于自身不持有 WebSocket 连接的服务（chat-logic）：
+// 它产生推送但从不投递，投递发生在订阅了频道的 gateway 实例上。
+// fallback 传 nil 时，Redis 故障期间的消息只能靠客户端重连补拉兜底。
+func NewRedisPublisher(client *redis.Client, fallback Sender) *RedisBus {
+	return &RedisBus{client: client, hub: fallback}
+}
+
 func NewRedisBus(ctx context.Context, client *redis.Client, hub Sender) (*RedisBus, error) {
 	sub := client.Subscribe(ctx, redisChannel)
 	// 等订阅确认后再返回，避免启动早期发布的消息落在订阅生效之前。
@@ -92,7 +99,9 @@ func (b *RedisBus) Publish(ctx context.Context, userIDs []uint, payload any) err
 		// 其他实例上的用户靠重连补拉兜底。和限流的 fail-open 是同一取舍。
 		logger.Warn("WSBusPublishFailed, fallback to local delivery",
 			logger.String("error", err.Error()))
-		b.hub.SendToMany(userIDs, json.RawMessage(raw))
+		if b.hub != nil {
+			b.hub.SendToMany(userIDs, json.RawMessage(raw))
+		}
 	}
 	return nil
 }
@@ -111,5 +120,8 @@ func (b *RedisBus) run() {
 }
 
 func (b *RedisBus) Close() error {
+	if b.sub == nil {
+		return nil
+	}
 	return b.sub.Close()
 }

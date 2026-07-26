@@ -11,6 +11,9 @@ import (
 
 type Options struct {
 	RateLimiter ratelimit.Limiter
+	// DisableWS 用于拆分部署的 chat-logic 服务：WebSocket 接入由 gateway 承担，
+	// logic 不再暴露 /v1/ws。
+	DisableWS bool
 }
 
 func New() *gin.Engine {
@@ -60,7 +63,9 @@ func NewWithConfigAndOptions(cfg *config.Config, opts Options) *gin.Engine {
 		group.POST("/user/login", controller.Login)
 		group.POST("/user/refresh", controller.RefreshToken)
 		group.POST("/user/logout", controller.Logout)
-		group.GET("/ws", controller.ConnectWS)
+		if !opts.DisableWS {
+			group.GET("/ws", controller.ConnectWS)
+		}
 		group.POST("/file/upload", controller.UploadFile)
 		group.POST("/file/upload/init", controller.InitMultipartUpload)
 		group.PUT("/file/upload/chunks/:uploadID/:index", controller.UploadMultipartChunk)

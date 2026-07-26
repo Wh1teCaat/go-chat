@@ -36,3 +36,12 @@ db = 0
 enabled = true
 requests = 120
 window_seconds = 60
+
+# 拆分部署（chat-logic + chat-gateway）配置；单体二进制忽略这两段。
+[grpc]
+addr = "0.0.0.0:9090"
+
+[gateway]
+host = "0.0.0.0"
+port = 8081
+logic_addr = "127.0.0.1:9090"

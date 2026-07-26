@@ -117,9 +117,16 @@ func handleWSMessage(ctx context.Context, senderID uint, payload []byte) error {
 			CreatedAt:   result.Message.CreatedAt,
 		},
 	})
+	pushConversationMessage(ctx, senderID, result)
+	return nil
+}
+
+// pushConversationMessage 把落库后的消息经总线推给接收方和发送者的其他设备。
+// 单体的 WS handler 和拆分部署后的 gRPC handler（logic 服务）共用这段推送编排。
+func pushConversationMessage(ctx context.Context, senderID uint, result *service.ConversationMessageResult) {
 	// 重复发送（ACK 丢失后的客户端重试）只需重发 ACK；消息第一次发送时已经推给过接收方。
 	if result.Duplicate {
-		return nil
+		return
 	}
 
 	// 推给接收方时带上接收端视角的会话目标：群聊就是群 ID；
@@ -146,7 +153,6 @@ func handleWSMessage(ctx context.Context, senderID uint, payload []byte) error {
 		Type: dto.WSMessageTypeMessage,
 		Data: senderMessage,
 	})
-	return nil
 }
 
 func sendWSError(userID uint, clientMsgID string, err error) {

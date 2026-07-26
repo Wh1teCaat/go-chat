@@ -31,18 +31,18 @@ services:
       timeout: 3s
       retries: 20
 
-  backend:
+  # chat-logic：业务层（REST + gRPC + 消息落库/推送编排）
+  logic:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: chat-backend
+    container_name: chat-logic
+    command: ["/app/chat-logic"]
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    ports:
-      - "8080:8080"
     volumes:
       # 容器内使用 Docker 专用配置，避免靠环境变量覆盖数据库和 Redis 地址。
       - ./configs/config.docker.toml:/app/configs/config.toml:ro
@@ -50,11 +50,39 @@ services:
       - ./uploads:/app/uploads
       - ./logs:/app/logs
 
+  # chat-gateway：WebSocket 接入层，无业务状态。
+  # 不固定 container_name，可用 --scale gateway=N 水平扩容（扩容后重启 edge 让 nginx 重新解析）。
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["/app/chat-gateway"]
+    depends_on:
+      redis:
+        condition: service_healthy
+      logic:
+        condition: service_started
+    volumes:
+      - ./configs/config.docker.toml:/app/configs/config.toml:ro
+      - ./logs:/app/logs
+
+  # edge：入口代理，对外保持单一地址 8080，/v1/ws 走 gateway，其余走 logic。
+  edge:
+    image: nginx:alpine
+    container_name: chat-edge
+    depends_on:
+      - logic
+      - gateway
+    ports:
+      - "8080:80"
+    volumes:
+      - ./deploy/nginx-edge.conf:/etc/nginx/conf.d/default.conf:ro
+
   frontend:
     image: nginx:alpine
     container_name: chat-frontend
     depends_on:
-      - backend
+      - edge
     ports:
       - "5173:80"
     volumes:
