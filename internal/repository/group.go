@@ -11,6 +11,7 @@ import (
 type GroupRepository interface {
 	CreateGroup(ctx context.Context, group *model.Group) error
 	GetGroupByID(ctx context.Context, id uint) (*model.Group, error)
+	GetGroupsByIDs(ctx context.Context, ids []uint) ([]model.Group, error)
 	UpdateGroup(ctx context.Context, id uint, updates map[string]interface{}) error
 	ListGroupsByOwnerID(ctx context.Context, ownerID uint) ([]model.Group, error)
 	ListJoinedGroupsByUserID(ctx context.Context, userID uint) ([]model.Group, error)
@@ -44,6 +45,18 @@ func (r *Repository) GetGroupByID(ctx context.Context, id uint) (*model.Group, e
 		return nil, err
 	}
 	return &group, nil
+}
+
+// GetGroupsByIDs 批量查询群信息，会话列表用它避免逐群查询。
+func (r *Repository) GetGroupsByIDs(ctx context.Context, ids []uint) ([]model.Group, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var groups []model.Group
+	if err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&groups).Error; err != nil {
+		return nil, err
+	}
+	return groups, nil
 }
 
 // UpdateGroup 只更新允许修改的群字段。

@@ -20,6 +20,8 @@ var publicRoutes = map[string]struct{}{
 	http.MethodPost + " /v1/user/register": {},
 	http.MethodPost + " /v1/user/login":    {},
 	http.MethodPost + " /v1/user/refresh":  {},
+	// logout 只依赖 body 里的 refresh token，access token 过期后也要能登出。
+	http.MethodPost + " /v1/user/logout": {},
 }
 
 func RequestID() gin.HandlerFunc {
@@ -128,7 +130,10 @@ func AuthRequired() gin.HandlerFunc {
 
 		tokenString := bearerToken(c.GetHeader("Authorization"))
 		if tokenString == "" {
-			tokenString = strings.TrimSpace(c.Query("token"))
+			// 浏览器 WebSocket API 无法自定义 Authorization header，
+			// 约定客户端把 token 放进 Sec-WebSocket-Protocol 的 "bearer.<token>" 条目。
+			// 不再接受 query string 传 token，避免 token 进入访问日志和浏览器历史。
+			tokenString = wsProtocolToken(c.GetHeader("Sec-WebSocket-Protocol"))
 		}
 		if tokenString == "" {
 			response.Error(c, apperrors.ErrUnauthorized)
@@ -146,6 +151,17 @@ func AuthRequired() gin.HandlerFunc {
 		c.Set("user_id", claims.UserID)
 		c.Next()
 	}
+}
+
+// wsProtocolToken 从 Sec-WebSocket-Protocol 头里解析 "bearer.<token>" 条目。
+func wsProtocolToken(header string) string {
+	for part := range strings.SplitSeq(header, ",") {
+		part = strings.TrimSpace(part)
+		if token, ok := strings.CutPrefix(part, "bearer."); ok {
+			return token
+		}
+	}
+	return ""
 }
 
 func bearerToken(header string) string {

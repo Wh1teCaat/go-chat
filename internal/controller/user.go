@@ -1,12 +1,9 @@
 package controller
 
 import (
-	"chat_proj/internal/auth"
 	"chat_proj/internal/dto"
 	"chat_proj/internal/service"
-	"chat_proj/pkg/apperrors"
 	"chat_proj/pkg/response"
-	"errors"
 
 	"github.com/gin-gonic/gin"
 )
@@ -36,18 +33,12 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	token, expireAt, err := auth.GenerateAccessToken(user.UserID, user.Email)
+	pair, err := service.TokenService.IssueTokenPair(c.Request.Context(), user.UserID, user.Email)
 	if err != nil {
-		response.Error(c, apperrors.WithCause(errors.New("internal error"), "failed to generate token", err))
+		response.Error(c, err)
 		return
 	}
-	refreshToken, refreshExpireAt, err := auth.GenerateRefreshToken(user.UserID, user.Email)
-	if err != nil {
-		response.Error(c, apperrors.WithCause(errors.New("internal error"), "failed to generate refresh token", err))
-		return
-	}
-
-	response.OK(c, tokenResponse(token, expireAt, refreshToken, refreshExpireAt))
+	response.OK(c, tokenResponse(pair))
 }
 
 func RefreshToken(c *gin.Context) {
@@ -57,32 +48,36 @@ func RefreshToken(c *gin.Context) {
 		return
 	}
 
-	claims, err := auth.ValidateRefreshToken(input.RefreshToken)
+	// 校验、allowlist 检查和轮换都在 TokenService 内完成；旧 refresh token 从此不可再用。
+	pair, err := service.TokenService.RefreshTokenPair(c.Request.Context(), input.RefreshToken)
 	if err != nil {
-		response.Error(c, apperrors.WithCause(apperrors.ErrInvalidToken, "invalid refresh token", err))
+		response.Error(c, err)
 		return
 	}
-
-	token, expireAt, err := auth.GenerateAccessToken(claims.UserID, claims.Username)
-	if err != nil {
-		response.Error(c, apperrors.WithCause(errors.New("internal error"), "failed to generate token", err))
-		return
-	}
-	refreshToken, refreshExpireAt, err := auth.GenerateRefreshToken(claims.UserID, claims.Username)
-	if err != nil {
-		response.Error(c, apperrors.WithCause(errors.New("internal error"), "failed to generate refresh token", err))
-		return
-	}
-
-	response.OK(c, tokenResponse(token, expireAt, refreshToken, refreshExpireAt))
+	response.OK(c, tokenResponse(pair))
 }
 
-func tokenResponse(token string, expireAt int64, refreshToken string, refreshExpireAt int64) gin.H {
+// Logout 吊销 refresh token。access token 本身短期有效、无状态，不做黑名单，
+// 过期后没有可用的 refresh token 就等于完全登出。
+func Logout(c *gin.Context) {
+	var input dto.RefreshTokenInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		response.BindError(c, err)
+		return
+	}
+	if err := service.TokenService.RevokeRefreshToken(c.Request.Context(), input.RefreshToken); err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.Message(c, "logged out")
+}
+
+func tokenResponse(pair *service.TokenPair) gin.H {
 	return gin.H{
-		"token":             token,
-		"expire_at":         expireAt,
-		"refresh_token":     refreshToken,
-		"refresh_expire_at": refreshExpireAt,
+		"token":             pair.AccessToken,
+		"expire_at":         pair.AccessExpireAt,
+		"refresh_token":     pair.RefreshToken,
+		"refresh_expire_at": pair.RefreshExpireAt,
 	}
 }
 

@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -33,15 +35,22 @@ func Init(secret string) error {
 	return nil
 }
 
-func GenerateRefreshToken(userID uint, username string) (string, int64, error) {
-	return buildToken(userID, username, tokenTypeRefresh, defaultRefreshTokenTTL)
+// GenerateRefreshToken 签发 refresh token。返回的 jti 是这次签发的唯一 ID，
+// 调用方要把它写进服务端 allowlist，刷新/登出时按 jti 轮换或吊销。
+func GenerateRefreshToken(userID uint, username string) (token string, expireAt int64, jti string, err error) {
+	jti, err = newTokenID()
+	if err != nil {
+		return "", 0, "", err
+	}
+	token, expireAt, err = buildToken(userID, username, tokenTypeRefresh, defaultRefreshTokenTTL, jti)
+	return token, expireAt, jti, err
 }
 
 func GenerateAccessToken(userID uint, username string) (string, int64, error) {
-	return buildToken(userID, username, tokenTypeAccess, defaultAccessTokenTTL)
+	return buildToken(userID, username, tokenTypeAccess, defaultAccessTokenTTL, "")
 }
 
-func buildToken(userID uint, username, tokenType string, ttl time.Duration) (string, int64, error) {
+func buildToken(userID uint, username, tokenType string, ttl time.Duration, jti string) (string, int64, error) {
 	if len(jwtSecret) == 0 {
 		return "", 0, errors.New("jwt secret not initialized")
 	}
@@ -51,6 +60,7 @@ func buildToken(userID uint, username, tokenType string, ttl time.Duration) (str
 		Username:  username,
 		TokenType: tokenType,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        jti,
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
 		},
@@ -62,6 +72,14 @@ func buildToken(userID uint, username, tokenType string, ttl time.Duration) (str
 		return "", 0, err
 	}
 	return tokenString, claims.ExpiresAt.Unix(), nil
+}
+
+func newTokenID() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }
 
 func ValidateToken(tokenString string) (*Claims, error) {
@@ -77,7 +95,7 @@ func validateToken(tokenString, expectedType string) (*Claims, error) {
 		return nil, errors.New("jwt secret not initialized")
 	}
 
-	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (any, error) {
 		if token.Method == jwt.SigningMethodHS256 {
 			return jwtSecret, nil
 		}

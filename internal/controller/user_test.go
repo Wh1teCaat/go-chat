@@ -3,10 +3,12 @@ package controller
 import (
 	"bytes"
 	"chat_proj/internal/auth"
+	"chat_proj/internal/cache"
 	"chat_proj/internal/model"
 	"chat_proj/internal/repository"
 	"chat_proj/internal/service"
 	"chat_proj/pkg/logger"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -101,26 +103,31 @@ func TestLoginReturnsAccessToken(t *testing.T) {
 	}
 }
 
-func TestRefreshTokenReturnsNewAccessToken(t *testing.T) {
+func TestRefreshTokenRotatesAndRevokesOldToken(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	if err := auth.Init("controller-refresh-test-secret"); err != nil {
 		t.Fatalf("auth.Init returned error: %v", err)
 	}
+	service.InitTokenStore(cache.NewMemoryStore())
 
-	refreshToken, _, err := auth.GenerateRefreshToken(42, "refresh@example.com")
+	pair, err := service.TokenService.IssueTokenPair(context.Background(), 42, "refresh@example.com")
 	if err != nil {
-		t.Fatalf("GenerateRefreshToken returned error: %v", err)
+		t.Fatalf("IssueTokenPair returned error: %v", err)
 	}
-
-	body := bytes.NewBufferString(`{"refreshToken":"` + refreshToken + `"}`)
-	req := httptest.NewRequest(http.MethodPost, "/v1/user/refresh", body)
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
 
 	r := gin.New()
 	r.POST("/v1/user/refresh", RefreshToken)
-	r.ServeHTTP(w, req)
 
+	postRefresh := func(refreshToken string) *httptest.ResponseRecorder {
+		body := bytes.NewBufferString(`{"refreshToken":"` + refreshToken + `"}`)
+		req := httptest.NewRequest(http.MethodPost, "/v1/user/refresh", body)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	w := postRefresh(pair.RefreshToken)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
 	}
@@ -146,6 +153,50 @@ func TestRefreshTokenReturnsNewAccessToken(t *testing.T) {
 	}
 	if claims.UserID != 42 || claims.Username != "refresh@example.com" {
 		t.Fatalf("unexpected claims: %+v", claims)
+	}
+
+	// 旧 refresh token 已被轮换吊销，重放必须失败。
+	if w := postRefresh(pair.RefreshToken); w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected replayed refresh token to get 401, got %d: %s", w.Code, w.Body.String())
+	}
+	// 轮换出来的新 refresh token 可以继续使用。
+	if w := postRefresh(response.Data.RefreshToken); w.Code != http.StatusOK {
+		t.Fatalf("expected rotated refresh token to work, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestLogoutRevokesRefreshToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	if err := auth.Init("controller-logout-test-secret"); err != nil {
+		t.Fatalf("auth.Init returned error: %v", err)
+	}
+	service.InitTokenStore(cache.NewMemoryStore())
+
+	pair, err := service.TokenService.IssueTokenPair(context.Background(), 7, "logout@example.com")
+	if err != nil {
+		t.Fatalf("IssueTokenPair returned error: %v", err)
+	}
+
+	r := gin.New()
+	r.POST("/v1/user/logout", Logout)
+	r.POST("/v1/user/refresh", RefreshToken)
+
+	body := bytes.NewBufferString(`{"refreshToken":"` + pair.RefreshToken + `"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/user/logout", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected logout status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	body = bytes.NewBufferString(`{"refreshToken":"` + pair.RefreshToken + `"}`)
+	req = httptest.NewRequest(http.MethodPost, "/v1/user/refresh", body)
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected revoked refresh token to get 401, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

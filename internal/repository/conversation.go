@@ -18,6 +18,8 @@ type ConversationMemberRepository interface {
 	AddConversationMember(ctx context.Context, member *model.ConversationMember) error
 	RemoveConversationMember(ctx context.Context, conversationID, userID uint) error
 	ListConversationMembersByConversationID(ctx context.Context, conversationID uint) ([]model.ConversationMember, error)
+	ListConversationMembersByConversationIDs(ctx context.Context, conversationIDs []uint) ([]model.ConversationMember, error)
+	ListConversationMembersByUserID(ctx context.Context, userID uint) ([]model.ConversationMember, error)
 	IsUserInConversation(ctx context.Context, conversationID, userID uint) (bool, error)
 	UpdateConversationMemberLastReadMessageID(ctx context.Context, conversationID, userID, messageID uint) error
 }
@@ -92,6 +94,27 @@ func (r *Repository) RemoveConversationMember(ctx context.Context, conversationI
 func (r *Repository) ListConversationMembersByConversationID(ctx context.Context, conversationID uint) ([]model.ConversationMember, error) {
 	var members []model.ConversationMember
 	if err := r.db.WithContext(ctx).Where("conversation_id = ?", conversationID).Find(&members).Error; err != nil {
+		return nil, err
+	}
+	return members, nil
+}
+
+// ListConversationMembersByConversationIDs 批量查询多个会话的成员，会话列表用它避免逐会话查询。
+func (r *Repository) ListConversationMembersByConversationIDs(ctx context.Context, conversationIDs []uint) ([]model.ConversationMember, error) {
+	if len(conversationIDs) == 0 {
+		return nil, nil
+	}
+	var members []model.ConversationMember
+	if err := r.db.WithContext(ctx).Where("conversation_id IN ?", conversationIDs).Find(&members).Error; err != nil {
+		return nil, err
+	}
+	return members, nil
+}
+
+// ListConversationMembersByUserID 查询用户自己的全部会话成员记录（含 last_read_message_id）。
+func (r *Repository) ListConversationMembersByUserID(ctx context.Context, userID uint) ([]model.ConversationMember, error) {
+	var members []model.ConversationMember
+	if err := r.db.WithContext(ctx).Where("user_id = ?", userID).Find(&members).Error; err != nil {
 		return nil, err
 	}
 	return members, nil

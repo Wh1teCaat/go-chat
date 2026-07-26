@@ -11,17 +11,29 @@
 }
 ```
 
-除注册、登录、刷新 token 和公开头像访问外，接口都需要请求头：
+除注册、登录、刷新 token、登出、健康检查和公开头像访问外，接口都需要请求头：
 
 ```http
 Authorization: Bearer <token>
 ```
 
-WebSocket 也可以通过查询参数传 token：
+浏览器 WebSocket API 无法自定义请求头，token 通过 `Sec-WebSocket-Protocol` 子协议条目传递（不再支持查询参数传 token，避免 token 进入访问日志）：
 
-```text
-ws://localhost:8080/v1/ws?token=<token>
+```js
+new WebSocket("ws://localhost:8080/v1/ws", ["chat", "bearer." + token]);
 ```
+
+服务端固定选择 `chat` 作为协商结果，`bearer.<token>` 条目只用于认证。
+
+### 健康检查
+
+`GET /health`（无需认证）
+
+```json
+{ "status": "ok", "db": "ok", "redis": "ok" }
+```
+
+数据库不可用时返回 503；Redis 是可降级依赖，只如实上报 `ok` / `down` / `disabled`，不影响整体健康判断。
 
 ## 用户
 
@@ -80,6 +92,20 @@ ws://localhost:8080/v1/ws?token=<token>
   "refresh_expire_at": 1782887700
 }
 ```
+
+refresh token 采用轮换机制：每次刷新会吊销旧 refresh token 并签发新的。旧 token 再次使用（重放）会返回 401，客户端必须保存响应里的新 `refresh_token`。服务端用 Redis 保存有效 refresh token 的 allowlist；未启用 Redis 时退回内存存储，服务重启后需要重新登录。
+
+### 登出
+
+`POST /v1/user/logout`（无需 access token，过期后也能登出）
+
+```json
+{
+  "refreshToken": "refresh-jwt-token"
+}
+```
+
+吊销服务端保存的 refresh token。access token 本身短期有效、无状态，过期后没有可用的 refresh token 即等于完全登出。token 无效或已吊销时同样返回成功（幂等）。
 
 ### 修改资料
 
@@ -240,7 +266,7 @@ ws://localhost:8080/v1/ws?token=<token>
 
 ### WebSocket 连接
 
-`GET /v1/ws?token=<token>`
+`GET /v1/ws`（token 通过 `Sec-WebSocket-Protocol` 传递，见文档开头）
 
 客户端发送文本消息：
 
@@ -253,6 +279,8 @@ ws://localhost:8080/v1/ws?token=<token>
   "content": "hello"
 }
 ```
+
+`clientMsgID` 参与服务端幂等去重：同一发送者的同一 `clientMsgID` 只会落库一次。ACK 丢失后客户端重发同一条消息，服务端会返回原消息的 ACK，不会重复入库，也不会再次推送给接收方。
 
 `targetType` 可取：
 
@@ -283,10 +311,16 @@ ws://localhost:8080/v1/ws?token=<token>
     "id": 100,
     "senderID": 1,
     "content": "hello",
-    "createdAt": "2026-06-23T10:00:00+08:00"
+    "createdAt": "2026-06-23T10:00:00+08:00",
+    "targetType": "private",
+    "targetID": 1
   }
 }
 ```
+
+`targetType`/`targetID` 是接收端视角的会话目标：群聊是群 ID；私聊时接收方看到的 `targetID` 是发送者用户 ID。客户端据此把消息归档到正确的会话。
+
+消息本体也会推送给发送者的全部连接（多标签页/多设备同步），并额外带 `clientMsgID`。发起发送的那个连接会同时收到 ACK 和这条推送，客户端按消息 `id` / `clientMsgID` 去重即可。
 
 服务端处理发送失败时会返回 `error` envelope；如果请求里带了 `clientMsgID`，错误也会原样带回，前端可以把对应本地消息标记为“发送失败”：
 
@@ -337,6 +371,9 @@ ws://localhost:8080/v1/ws?token=<token>
 }
 ```
 
+- `beforeMessageID`：向上翻历史的游标，按 id 倒序返回更早的消息；为空时返回最新一页。
+- `afterMessageID`：断线重连后的增量补拉游标，按 id 升序返回比它更新的消息；与 `beforeMessageID` 互斥，同时传时以 `afterMessageID` 为准。
+
 `POST /v1/message/read`
 
 ```json
@@ -347,7 +384,7 @@ ws://localhost:8080/v1/ws?token=<token>
 }
 ```
 
-`GET /v1/message/sessions`
+`POST /v1/message/sessions`
 
 ## 文件
 

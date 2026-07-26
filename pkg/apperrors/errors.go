@@ -77,6 +77,9 @@ var (
 
 	// ErrHashFailed 映射 HTTP 500，表示密码哈希发生非预期失败。
 	ErrHashFailed = errors.New("password hashing failed")
+
+	// ErrTokenOperation 映射 HTTP 500，表示 token 签发或存储发生非预期失败。
+	ErrTokenOperation = errors.New("token operation failed")
 )
 
 // HTTPCode 根据业务错误类型返回对应的 HTTP 状态码
@@ -100,7 +103,8 @@ func HTTPCode(err error) int {
 	case errors.Is(err, ErrConflict):
 		return http.StatusConflict
 	case errors.Is(err, ErrDBOperation),
-		errors.Is(err, ErrHashFailed):
+		errors.Is(err, ErrHashFailed),
+		errors.Is(err, ErrTokenOperation):
 		return http.StatusInternalServerError
 	default:
 		return http.StatusInternalServerError
@@ -133,6 +137,8 @@ func Code(err error) string {
 		return "db_operation_failed"
 	case errors.Is(err, ErrHashFailed):
 		return "hash_failed"
+	case errors.Is(err, ErrTokenOperation):
+		return "token_operation_failed"
 	default:
 		return "internal_error"
 	}

@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"chat_proj/internal/auth"
@@ -79,7 +82,10 @@ func run(deps appDeps) {
 	service.Init(repository.NewRepository(db))
 	// 当前使用本地文件系统保存上传文件；后续换 OSS/MinIO 只需要替换 storage 实现。
 	service.InitFileStorage(storage.NewLocalStorage("uploads", "/uploads"))
-	startMultipartUploadCleanup(context.Background(), time.Hour)
+	// 后台清理随停机取消，避免关闭过程中还有 goroutine 在写数据库。
+	cleanupCtx, stopCleanup := context.WithCancel(context.Background())
+	defer stopCleanup()
+	startMultipartUploadCleanup(cleanupCtx, time.Hour)
 
 	redisClient, err := cache.NewRedisClient(context.Background(), cfg.Redis)
 	if err != nil {
@@ -90,18 +96,66 @@ func run(deps appDeps) {
 	if redisClient != nil {
 		logger.Info("Redis initialized successfully")
 		service.InitCacheStore(cache.NewRedisStore(redisClient))
+		// refresh token allowlist 放 Redis：多实例共享，重启不丢已登录会话。
+		service.InitTokenStore(cache.NewRedisStore(redisClient))
 		defer redisClient.Close()
 	} else {
 		service.InitCacheStore(nil)
+		// 没有 Redis 时 allowlist 退回进程内存，服务重启后所有 refresh token 失效，需要重新登录。
+		service.InitTokenStore(nil)
 	}
 	presenceStore := initPresenceStore(redisClient)
 	service.InitPresenceStore(presenceStore)
 	controller.InitPresenceStore(presenceStore)
 	limiter := initRateLimiter(redisClient)
+	controller.InitHealthCheckers(buildDBPing(db), buildRedisPing(redisClient))
 
-	if err := deps.listenAndServe(buildServer(cfg, deps.newRouter(cfg, limiter))); err != nil {
-		logger.Error("Server error", logger.Any("error", err))
-		deps.exit(1)
+	server := buildServer(cfg, deps.newRouter(cfg, limiter))
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- deps.listenAndServe(server)
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case err := <-serveErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("Server error", logger.Any("error", err))
+			deps.exit(1)
+		}
+	case sig := <-quit:
+		logger.Info("Shutdown signal received", logger.String("signal", sig.String()))
+		stopCleanup()
+
+		// 先停 HTTP 监听并等待存量请求结束；websocket 连接已脱离 net/http 管理，需要单独关闭。
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			logger.Warn("Server shutdown incomplete", logger.Any("error", err))
+		}
+		controller.WSHub.CloseAll()
+		logger.Info("Server stopped gracefully")
+	}
+}
+
+func buildDBPing(db *gorm.DB) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		sqlDB, err := db.DB()
+		if err != nil {
+			return err
+		}
+		return sqlDB.PingContext(ctx)
+	}
+}
+
+func buildRedisPing(client *redis.Client) func(ctx context.Context) error {
+	if client == nil {
+		return nil
+	}
+	return func(ctx context.Context) error {
+		return client.Ping(ctx).Err()
 	}
 }
 

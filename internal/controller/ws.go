@@ -22,6 +22,9 @@ var WSHub = ws.NewHub()
 var wsAllowedOrigins = map[string]struct{}{}
 
 var wsUpgrader = websocket.Upgrader{
+	// 客户端在子协议里同时携带 "chat" 和 "bearer.<token>"；服务端固定选择 "chat" 回应，
+	// token 条目只用于认证（见 middleware.AuthRequired），不作为协商结果。
+	Subprotocols: []string{"chat"},
 	CheckOrigin: func(r *http.Request) bool {
 		origin := r.Header.Get("Origin")
 		if origin == "" {
@@ -91,10 +94,34 @@ func handleWSMessage(ctx context.Context, senderID uint, payload []byte) error {
 			CreatedAt:   result.Message.CreatedAt,
 		},
 	})
+	// 重复发送（ACK 丢失后的客户端重试）只需重发 ACK；消息第一次发送时已经推给过接收方。
+	if result.Duplicate {
+		return nil
+	}
+
+	// 推给接收方时带上接收端视角的会话目标：群聊就是群 ID；
+	// 私聊时接收方看到的目标是发送者本人，客户端据此归档到正确会话。
+	receiverMessage := result.Message
+	receiverMessage.TargetType = result.TargetType
+	receiverMessage.TargetID = result.TargetID
+	if result.TargetType == dto.MessageTargetTypePrivate {
+		receiverMessage.TargetID = senderID
+	}
 	// 接收方不需要主动拉取；服务端推送到达后，浏览器端 onmessage 回调会被触发。
 	WSHub.SendToMany(result.ReceiverIDs, wsEnvelope{
 		Type: dto.WSMessageTypeMessage,
-		Data: result.Message,
+		Data: receiverMessage,
+	})
+
+	// 消息本体也推给发送者的全部连接（多标签页/多设备），带 clientMsgID 供发送端本地去重。
+	// 发起消息的那个连接会同时收到 ACK 和这条推送，客户端按消息 ID 去重。
+	senderMessage := result.Message
+	senderMessage.TargetType = result.TargetType
+	senderMessage.TargetID = result.TargetID
+	senderMessage.ClientMsgID = result.ClientMsgID
+	WSHub.SendTo(senderID, wsEnvelope{
+		Type: dto.WSMessageTypeMessage,
+		Data: senderMessage,
 	})
 	return nil
 }

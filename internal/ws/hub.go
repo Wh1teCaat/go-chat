@@ -74,3 +74,20 @@ func (h *Hub) SendToMany(userIDs []uint, message any) {
 		h.SendTo(userID, message)
 	}
 }
+
+// CloseAll 关闭全部连接，用于优雅停机。websocket 连接在 Upgrade 后已脱离
+// net/http 的连接管理，server.Shutdown 不会等待它们，需要显式关闭。
+func (h *Hub) CloseAll() {
+	h.mu.RLock()
+	clients := make([]*Client, 0)
+	for _, userClients := range h.clients {
+		for client := range userClients {
+			clients = append(clients, client)
+		}
+	}
+	h.mu.RUnlock()
+
+	for _, client := range clients {
+		client.Close()
+	}
+}

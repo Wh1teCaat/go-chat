@@ -43,6 +43,9 @@ func NewWithConfigAndOptions(cfg *config.Config, opts Options) *gin.Engine {
 		r.Use(middleware.RateLimit(limiter, cfg.RateLimit.Limit(), cfg.RateLimit.Window()))
 	}
 
+	// /health 注册在 AuthRequired 之前，负载均衡探活不需要凭证。
+	r.GET("/health", controller.Health)
+
 	// /uploads 只作为头像等公开资源入口。
 	// 聊天附件不能直接静态暴露，必须走 /v1/file/:id/download 做登录和会话权限校验。
 	r.GET("/uploads/*filepath", controller.PublicUploadedFile)
@@ -56,6 +59,7 @@ func NewWithConfigAndOptions(cfg *config.Config, opts Options) *gin.Engine {
 		group.POST("/user/register", controller.Register)
 		group.POST("/user/login", controller.Login)
 		group.POST("/user/refresh", controller.RefreshToken)
+		group.POST("/user/logout", controller.Logout)
 		group.GET("/ws", controller.ConnectWS)
 		group.POST("/file/upload", controller.UploadFile)
 		group.POST("/file/upload/init", controller.InitMultipartUpload)

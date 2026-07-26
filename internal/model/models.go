@@ -81,11 +81,14 @@ type ConversationMember struct {
 }
 
 type Message struct {
-	ID             uint      `gorm:"primaryKey" json:"id"`
-	ConversationID uint      `gorm:"index;not null" json:"conversation_id"`
-	SenderID       uint      `gorm:"index;not null" json:"sender_id"`
-	Content        string    `gorm:"type:text;not null" json:"content"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID             uint `gorm:"primaryKey" json:"id"`
+	ConversationID uint `gorm:"index;not null" json:"conversation_id"`
+	SenderID       uint `gorm:"index;uniqueIndex:idx_messages_sender_client_msg;not null" json:"sender_id"`
+	// ClientMsgID 为 NULL 时不参与唯一约束；同一发送者的同一 clientMsgID 只会落库一次，
+	// 客户端 ACK 超时重发时服务端据此去重。
+	ClientMsgID *string   `gorm:"size:64;uniqueIndex:idx_messages_sender_client_msg" json:"client_msg_id,omitempty"`
+	Content     string    `gorm:"type:text;not null" json:"content"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type File struct {

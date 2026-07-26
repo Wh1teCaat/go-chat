@@ -3,10 +3,67 @@ export function normalizeBaseUrl(value) {
   return trimmed || "http://localhost:8080";
 }
 
-export function buildWsUrl(baseUrl, token) {
+export function buildWsUrl(baseUrl) {
   const normalized = normalizeBaseUrl(baseUrl);
   const wsBase = normalized.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
-  return `${wsBase}/v1/ws?token=${encodeURIComponent(token)}`;
+  return `${wsBase}/v1/ws`;
+}
+
+// token 通过 Sec-WebSocket-Protocol 传给服务端（浏览器 WebSocket 无法自定义 header），
+// 不再拼进 URL，避免 token 进入服务端访问日志。服务端固定选 "chat" 作为协商结果。
+export function buildWsProtocols(token) {
+  return ["chat", `bearer.${token}`];
+}
+
+// mergeIncomingMessage 把 WS 推送的消息合并进本地列表并去重：
+// 1) 服务端消息 ID 已存在（本标签页已通过 ACK 更新过）→ 不重复插入；
+// 2) clientMsgID 对上本地"发送中"的消息（ACK 还没到）→ 原地升级为已发送；
+// 3) 都对不上 → 追加（别人发的消息或自己其他设备发的消息）。
+export function mergeIncomingMessage(messages, incoming) {
+  const incomingID = numericMessageID(incoming.id);
+  if (incomingID > 0 && messages.some((message) => numericMessageID(message.id) === incomingID)) {
+    return { messages, appended: false };
+  }
+  const clientMsgID = String(incoming.clientMsgID || "");
+  if (clientMsgID && messages.some((message) => messageMatchesClientID(message, clientMsgID))) {
+    return {
+      messages: messages.map((message) => {
+        if (!messageMatchesClientID(message, clientMsgID)) {
+          return message;
+        }
+        return {
+          ...message,
+          id: incomingID > 0 ? incomingID : message.id,
+          createdAt: incoming.createdAt || message.createdAt,
+          local: false,
+          status: message.status === "read" ? "read" : "sent",
+        };
+      }),
+      appended: false,
+    };
+  }
+  return { messages: [...messages, incoming], appended: true };
+}
+
+// messageMatchesTarget 判断 WS 推送的消息是否属于当前打开的会话。
+// 服务端推送时会带 targetType/targetID（接收端视角）。
+export function messageMatchesTarget(message, target) {
+  if (!target || !message) {
+    return false;
+  }
+  return String(message.targetType || "") === String(target.type) && Number(message.targetID) === Number(target.id);
+}
+
+// latestServerMessageID 取本地列表中最大的服务端消息 ID，作为断线重连后增量补拉的游标。
+export function latestServerMessageID(messages) {
+  let latest = 0;
+  for (const message of messages) {
+    const id = numericMessageID(message.id);
+    if (id > latest) {
+      latest = id;
+    }
+  }
+  return latest;
 }
 
 export function normalizeChatTarget(item, source) {

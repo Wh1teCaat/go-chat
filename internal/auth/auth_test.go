@@ -40,13 +40,20 @@ func TestRefreshTokenIsSeparateFromAccessToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateAccessToken returned error: %v", err)
 	}
-	refreshToken, _, err := GenerateRefreshToken(42, "alice")
+	refreshToken, _, jti, err := GenerateRefreshToken(42, "alice")
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken returned error: %v", err)
 	}
+	if jti == "" {
+		t.Fatal("expected refresh token to carry a jti")
+	}
 
-	if _, err := ValidateRefreshToken(refreshToken); err != nil {
+	claims, err := ValidateRefreshToken(refreshToken)
+	if err != nil {
 		t.Fatalf("ValidateRefreshToken returned error: %v", err)
+	}
+	if claims.ID != jti {
+		t.Fatalf("expected claims jti %q, got %q", jti, claims.ID)
 	}
 	if _, err := ValidateRefreshToken(accessToken); err == nil || !strings.Contains(err.Error(), "invalid token type") {
 		t.Fatalf("expected access token to be rejected as refresh token, got %v", err)
