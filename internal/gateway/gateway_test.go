@@ -125,6 +125,29 @@ func TestGatewayForwardsMessageAndReturnsAck(t *testing.T) {
 	}
 }
 
+func TestGRPCErrorToWSMapping(t *testing.T) {
+	cases := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		{"permission", status.Error(codes.PermissionDenied, "no"), 403, "permission_denied"},
+		{"not found", status.Error(codes.NotFound, "no"), 404, "not_found"},
+		{"invalid", status.Error(codes.InvalidArgument, "no"), 400, "invalid_input"},
+		// logic 挂起/不可达都归为临时故障，客户端可安全重试（clientMsgID 幂等兜底）。
+		{"timeout", status.Error(codes.DeadlineExceeded, "no"), 503, "logic_unavailable"},
+		{"unavailable", status.Error(codes.Unavailable, "no"), 503, "logic_unavailable"},
+		{"internal", status.Error(codes.Internal, "no"), 500, "internal_error"},
+	}
+	for _, tc := range cases {
+		gotStatus, gotCode, _ := grpcErrorToWS(tc.err)
+		if gotStatus != tc.wantStatus || gotCode != tc.wantCode {
+			t.Fatalf("%s: expected (%d,%s), got (%d,%s)", tc.name, tc.wantStatus, tc.wantCode, gotStatus, gotCode)
+		}
+	}
+}
+
 func TestGatewayMapsGRPCErrorToWSError(t *testing.T) {
 	conn := startGateway(t)
 

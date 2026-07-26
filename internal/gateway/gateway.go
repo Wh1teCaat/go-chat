@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"chat_proj/internal/dto"
 	"chat_proj/internal/rpc/chatpb"
@@ -20,6 +21,12 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// sendMessageTimeout 是单条消息转发 logic 的上限。handleIncoming 在连接的 readLoop 里
+// 同步执行，logic 挂起时若无上限会拖死整条连接的读循环（心跳仍正常，故障被静默吞掉）。
+// 取值与前端 ACK 超时（10s）对齐：服务端放弃时客户端也恰好把消息标记为发送失败，
+// 用户重试由 clientMsgID 幂等兜底。
+const sendMessageTimeout = 10 * time.Second
 
 type Server struct {
 	hub      *ws.Hub
@@ -81,7 +88,9 @@ func (g *Server) handleIncoming(ctx context.Context, senderID uint, payload []by
 		return nil
 	}
 
-	resp, err := g.client.SendMessage(ctx, &chatpb.SendMessageRequest{
+	rpcCtx, cancel := context.WithTimeout(ctx, sendMessageTimeout)
+	defer cancel()
+	resp, err := g.client.SendMessage(rpcCtx, &chatpb.SendMessageRequest{
 		SenderId:    uint64(senderID),
 		ClientMsgId: input.ClientMsgID,
 		TargetType:  string(input.TargetType),

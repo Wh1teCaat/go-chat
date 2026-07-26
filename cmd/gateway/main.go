@@ -138,5 +138,10 @@ func gatewayLogPath(base string) string {
 	if file == "" {
 		file = "app.log"
 	}
+	// 带上主机名（容器内是 container id）：--scale gateway=N 时多个副本共享日志卷，
+	// 写同一个文件会破坏 lumberjack 的轮转。
+	if host, err := os.Hostname(); err == nil && host != "" {
+		return filepath.Join(dir, "gateway-"+host+"-"+file)
+	}
 	return filepath.Join(dir, "gateway-"+file)
 }
