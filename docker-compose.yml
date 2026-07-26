@@ -50,13 +50,16 @@ services:
       - ./uploads:/app/uploads
       - ./logs:/app/logs
 
-  # chat-gateway：WebSocket 接入层，无业务状态。
-  # 不固定 container_name，可用 --scale gateway=N 水平扩容（扩容后重启 edge 让 nginx 重新解析）。
+  # chat-gateway：WebSocket 接入层，无业务状态，默认 2 副本演示水平扩容。
+  # 注意：`docker compose up` 不带 --scale 时会把副本数收敛回这里的 replicas 值，
+  # 临时改副本数用 --scale gateway=N，改完需要 `docker compose restart edge` 重新解析。
   gateway:
     build:
       context: .
       dockerfile: Dockerfile
     command: ["/app/chat-gateway"]
+    deploy:
+      replicas: 2
     depends_on:
       redis:
         condition: service_healthy
@@ -67,8 +70,11 @@ services:
       - ./logs:/app/logs
 
   # edge：入口代理，对外保持单一地址 8080，/v1/ws 走 gateway，其余走 logic。
+  # 负载均衡配置（zone + least_conn）的原因见 deploy/nginx-edge.conf 注释和
+  # docs/design/02-gateway-logic-split.md 的排查记录。
+  # --scale gateway=N 之后需要 `docker compose restart edge` 重新解析副本列表。
   edge:
-    image: nginx:alpine
+    image: nginx:latest
     container_name: chat-edge
     depends_on:
       - logic

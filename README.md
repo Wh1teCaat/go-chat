@@ -39,7 +39,8 @@ api/proto/            gRPC proto 定义（gateway ↔ chat-logic）
 cmd/                  单体入口：一个进程承载全部能力，本地开发默认形态
 cmd/gateway/          拆分部署：WebSocket 接入层（认证、连接、ACK、总线订阅投递）
 cmd/logic/            拆分部署：业务层（REST + gRPC + 落库/推送编排，总线发布）
-deploy/               入口代理等部署配置
+deploy/               入口代理配置（nginx edge：路径分流 + WS 长连接负载均衡）
+smoketest/            端到端冒烟脚本，对拆分部署完整验证核心链路
 configs/              默认 TOML 配置；本地复制 config.example.toml 为 config.toml，Docker 用 config.docker.toml
 internal/auth/        JWT 生成与校验
 internal/cache/       Redis 客户端、缓存 Store 和缓存 key 定义
@@ -76,10 +77,10 @@ docker compose up --build
 - PostgreSQL：`localhost:5432`
 - Redis：`localhost:6379`
 
-Compose 以**拆分形态**启动：PostgreSQL、Redis、`chat-logic`（REST + gRPC）、`chat-gateway`（WS 接入）、`edge`（nginx 入口代理，`/v1/ws` 分流到 gateway、其余到 logic）和前端。前端仍然只面对 `localhost:8080` 一个地址。gateway 可水平扩容：
+Compose 以**拆分形态**启动：PostgreSQL、Redis、`chat-logic`（REST + gRPC）、`chat-gateway`（WS 接入，默认 2 副本）、`edge`（nginx 入口代理，`/v1/ws` 分流到 gateway、其余到 logic，`least_conn` 按活跃连接数均衡）和前端。前端仍然只面对 `localhost:8080` 一个地址。调整 gateway 副本数后需重启 edge 重新解析：
 
 ```bash
-docker compose up -d --scale gateway=2 && docker compose restart edge
+docker compose up -d --scale gateway=3 && docker compose restart edge
 ```
 
 后端容器会把 `configs/config.docker.toml` 挂载成容器内的 `configs/config.toml`，所以数据库地址使用 `postgres`，Redis 地址使用 `redis:6379`，gateway 通过 `logic:9090` 连 logic 的 gRPC。
@@ -254,6 +255,13 @@ sequenceDiagram
 GOCACHE=/tmp/go-build GOMODCACHE=/tmp/go-mod go test ./...
 node --check web/app.js
 node --test web/app-helpers.test.mjs
+```
+
+拆分部署起来后，可以对整套栈跑端到端冒烟（注册/登录/加好友/发消息/ACK/推送/幂等/补拉/已读/登出，共 21 项断言）：
+
+```bash
+docker compose up -d --build
+go run ./smoketest                 # 默认走 http://localhost:8080
 ```
 
 Redis 集成测试需要本机有 Redis，并显式打开：

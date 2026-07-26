@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -67,12 +68,21 @@ func main() {
 	}
 
 	// gRPC 连接 chat-logic。内网服务间调用，暂用明文；上生产应换 mTLS。
-	conn, err := grpc.NewClient(cfg.Gateway.LogicAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// 用 passthrough 绕开 grpc-go 自带的 DNS resolver：它会串行发 TXT（service config）
+	// 查询，Docker 内置 DNS 常不响应这类查询，首次 RPC 会白等 5s+ 超时。
+	// passthrough 直接用系统解析器建连，单个 logic 地址不需要客户端负载均衡。
+	target := cfg.Gateway.LogicAddr
+	if !strings.Contains(target, "://") {
+		target = "passthrough:///" + target
+	}
+	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		logger.Error("Failed to dial chat-logic", logger.Any("error", err))
 		os.Exit(1)
 	}
 	defer conn.Close()
+	// 启动即预热连接，首条用户消息不吃建连延迟。
+	conn.Connect()
 
 	gw := gateway.New(hub, chatpb.NewChatServiceClient(conn), cfg.CORS.AllowedOrigins)
 
