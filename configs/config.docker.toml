@@ -34,7 +34,9 @@ db = 0
 
 [rate_limit]
 enabled = true
-requests = 120
+# 演示/压测环境放宽到 100 req/s：限流按 client IP 计数，压测器和同网段
+# 多用户都来自同一 IP，120/min 会误伤；生产按真实流量画像另调。
+requests = 6000
 window_seconds = 60
 
 # 拆分部署（chat-logic + chat-gateway）配置；单体二进制忽略以下段落。

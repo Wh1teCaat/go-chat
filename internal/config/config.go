@@ -68,6 +68,16 @@ type DatabaseConfig struct {
 	DBName   string `mapstructure:"dbname"`
 	SSLMode  string `mapstructure:"sslmode"`
 	TimeZone string `mapstructure:"timezone"`
+	// MaxOpenConns 连接池上限。多实例部署时注意 实例数×上限 要小于
+	// PostgreSQL 的 max_connections（默认 100）。
+	MaxOpenConns int `mapstructure:"max_open_conns"`
+}
+
+func (d DatabaseConfig) PoolMaxOpen() int {
+	if d.MaxOpenConns <= 0 {
+		return 30
+	}
+	return d.MaxOpenConns
 }
 
 type JWTConfig struct {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"chat_proj/internal/config"
 	"chat_proj/pkg/logger"
@@ -39,6 +40,18 @@ func InitDB(dbConfig config.DatabaseConfig) (*gorm.DB, error) {
 		logger.Error("Failed to connect to target database", logger.Any("error", err))
 		return nil, err
 	}
+
+	// 连接池必须显式设上限：database/sql 默认 MaxOpenConns 无限制，高并发下
+	// 每个并发查询都可能新开连接，直接打爆 PostgreSQL 的 max_connections（默认 100）。
+	// 压测实测：未设上限时 400 msg/s 即触发 "too many clients already" 连接风暴。
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, err
+	}
+	sqlDB.SetMaxOpenConns(dbConfig.PoolMaxOpen())
+	sqlDB.SetMaxIdleConns(dbConfig.PoolMaxOpen())
+	sqlDB.SetConnMaxLifetime(time.Hour)
+	sqlDB.SetConnMaxIdleTime(10 * time.Minute)
 
 	if err := runMigrations(db, defaultMigrationsDir); err != nil {
 		logger.Error("Failed to migrate database schema", logger.Any("error", err))

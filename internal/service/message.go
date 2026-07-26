@@ -423,13 +423,21 @@ func (s *messageService) resolveConversation(ctx context.Context, userID uint, t
 	case dto.MessageTargetTypePrivate:
 		conversation, err := repo.GetPrivateConversationBetweenUsers(ctx, userID, targetID)
 		if err != nil {
-			return nil, apperrors.WithMessage(apperrors.ErrNotFound, "private conversation not found")
+			// 只有"确实查无此会话"才是 404；连接池耗尽等基础设施错误必须按 500 上报，
+			// 否则故障会被伪装成业务错误（压测时曾把连接风暴误报成大量 not_found）。
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, apperrors.WithMessage(apperrors.ErrNotFound, "private conversation not found")
+			}
+			return nil, dbOperationError(err)
 		}
 		return conversation, nil
 	case dto.MessageTargetTypeGroup:
 		conversation, err := repo.GetConversationByGroupID(ctx, targetID)
 		if err != nil {
-			return nil, apperrors.WithMessage(apperrors.ErrNotFound, "group conversation not found")
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, apperrors.WithMessage(apperrors.ErrNotFound, "group conversation not found")
+			}
+			return nil, dbOperationError(err)
 		}
 
 		inConversation, err := repo.IsUserInConversation(ctx, conversation.ID, userID)
