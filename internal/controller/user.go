@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"fmt"
+
 	"chat_proj/internal/dto"
 	"chat_proj/internal/service"
 	"chat_proj/pkg/response"
@@ -106,7 +108,7 @@ func AddFriend(c *gin.Context) {
 		return
 	}
 	if result != nil {
-		pushToUsers(c.Request.Context(), []uint{result.ReceiverID}, wsEnvelope{
+		pushToUsers(c.Request.Context(), fmt.Sprintf("user:%d", result.ReceiverID), []uint{result.ReceiverID}, wsEnvelope{
 			Type: dto.WSMessageTypeFriendRequest,
 			Data: result.Request,
 		})

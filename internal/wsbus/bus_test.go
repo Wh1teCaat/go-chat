@@ -48,7 +48,7 @@ func TestLocalBusDeliversDirectly(t *testing.T) {
 	defer bus.Close()
 
 	payload := map[string]string{"type": "message"}
-	if err := bus.Publish(context.Background(), []uint{1, 2}, payload); err != nil {
+	if err := bus.Publish(context.Background(), "conv:1", []uint{1, 2}, payload); err != nil {
 		t.Fatalf("Publish returned error: %v", err)
 	}
 
@@ -95,7 +95,7 @@ func TestRedisBusBroadcastsAcrossInstances(t *testing.T) {
 	defer bus2.Close()
 
 	payload := map[string]any{"type": "message", "data": map[string]any{"id": 42}}
-	if err := bus1.Publish(context.Background(), []uint{7}, payload); err != nil {
+	if err := bus1.Publish(context.Background(), "conv:7", []uint{7}, payload); err != nil {
 		t.Fatalf("Publish returned error: %v", err)
 	}
 

@@ -7,7 +7,8 @@
 - 后端：Gin + GORM + PostgreSQL，REST 接口处理账号、好友、群组、消息列表和文件上传下载。
 - 认证：JWT access token + refresh token。refresh token 带 jti，服务端用 Redis allowlist 管理（无 Redis 时退回内存）；每次刷新轮换并吊销旧 token，重放返回 401；`/v1/user/logout` 吊销 refresh token。WebSocket 通过 `Sec-WebSocket-Protocol` 的 `bearer.<token>` 条目认证，token 不进 URL。前端会在 access token 过期前主动刷新，接口遇到 401 时也会自动刷新后重试。
 - 实时消息：Gorilla WebSocket。客户端发消息后服务端落库并返回 `message_ack`，前端据此展示发送中/已发送/发送失败/已读状态。`clientMsgID` 参与服务端幂等去重（`(sender_id, client_msg_id)` 唯一索引），ACK 丢失重发不会重复落库。消息本体推送给接收方和发送者的全部连接（多标签页/多设备同步），推送带接收端视角的 `targetType`/`targetID`。前端断线后指数退避自动重连，重连成功用 `afterMessageID` 增量补拉断线期间的消息。
-- 多实例：推送经 `internal/wsbus` 总线路由——启用 Redis 时走 Pub/Sub 全局频道广播，每个实例只投递本地在线用户，支持多实例水平扩展；无 Redis 时退化为进程内直投。ACK/错误只对发起连接有意义，始终本地直投。设计取舍见 [docs/design/01-multi-instance-ws.md](docs/design/01-multi-instance-ws.md)。
+- 多实例：推送经 `internal/wsbus` 总线路由，三种实现按部署形态选择——进程内直投（单体单实例）、Redis Pub/Sub（单体多实例 / 拆分降级路径）、Kafka（拆分部署默认）。ACK/错误只对发起连接有意义，始终本地直投。设计取舍见 [docs/design/01-multi-instance-ws.md](docs/design/01-multi-instance-ws.md)。
+- 事件总线：拆分部署下 logic 把推送事件发布到 Kafka（`chat.events`，按 `conv:<会话ID>` 等顺序域键哈希分区，同会话事件严格有序），每个 gateway 实例用独立消费组订阅（广播语义）；at-least-once + 客户端按消息 ID 幂等去重。持久化事件流为离线推送、消息轨迹预留了消费入口。动因与取舍见 [docs/design/03-kafka-event-bus.md](docs/design/03-kafka-event-bus.md)。
 - 服务拆分：支持三种部署形态，共用同一镜像——单体（`cmd/`，本地开发可无 Redis）；拆分部署 `chat-gateway`（WS 接入层，无状态、按连接数扩容）+ `chat-logic`（REST + 业务，按 QPS 扩容），两者以 gRPC 通信（`api/proto/chat/v1`），入口由 nginx edge 按路径分流，前端不感知拆分。拆分边界与 RPC 面设计见 [docs/design/02-gateway-logic-split.md](docs/design/02-gateway-logic-split.md)。
 - 缓存：Redis 可选开启；当前用于限流计数、用户资料缓存、群资料缓存、在线状态和 refresh token allowlist，Redis 不可用时退回内存实现。
 - 运维：`GET /health` 健康检查（数据库不可用返回 503）；收到 SIGINT/SIGTERM 后优雅停机（停止监听、等待存量请求、关闭全部 WebSocket 连接）。
@@ -23,9 +24,9 @@ flowchart LR
     Edge <-->|WebSocket| GW["chat-gateway<br/>Hub + 认证 + ACK"]
     GW -->|gRPC SendMessage| Logic
     Logic --> PG[("PostgreSQL")]
-    Logic -->|"缓存/限流/token"| Redis[("Redis")]
-    Logic -->|"wsbus 发布"| Redis
-    Redis -->|"wsbus 订阅投递"| GW
+    Logic -->|"缓存/限流/token/在线状态"| Redis[("Redis")]
+    Logic -->|"wsbus 发布（按会话键分区）"| Kafka[("Kafka chat.events")]
+    Kafka -->|"每实例独立消费组订阅"| GW
     Logic --> Storage["Storage 接口"] --> Local[("本地 uploads/")]
     Logic --> Goose["goose migrations"] --> PG
 ```
@@ -77,7 +78,7 @@ docker compose up --build
 - PostgreSQL：`localhost:5432`
 - Redis：`localhost:6379`
 
-Compose 以**拆分形态**启动：PostgreSQL、Redis、`chat-logic`（REST + gRPC）、`chat-gateway`（WS 接入，默认 2 副本）、`edge`（nginx 入口代理，`/v1/ws` 分流到 gateway、其余到 logic，`least_conn` 按活跃连接数均衡）和前端。前端仍然只面对 `localhost:8080` 一个地址。调整 gateway 副本数后需重启 edge 重新解析：
+Compose 以**拆分形态**启动：PostgreSQL、Redis、Kafka（KRaft 单节点事件总线）、`chat-logic`（REST + gRPC）、`chat-gateway`（WS 接入，默认 2 副本）、`edge`（nginx 入口代理，`/v1/ws` 分流到 gateway、其余到 logic，`least_conn` 按活跃连接数均衡）和前端。前端仍然只面对 `localhost:8080` 一个地址。调整 gateway 副本数后需重启 edge 重新解析：
 
 ```bash
 docker compose up -d --scale gateway=3 && docker compose restart edge
@@ -264,8 +265,9 @@ docker compose up -d --build
 go run ./smoketest                 # 默认走 http://localhost:8080
 ```
 
-Redis 集成测试需要本机有 Redis，并显式打开：
+Redis / Kafka 集成测试需要对应的本机实例（`docker compose up -d redis kafka`），并显式打开：
 
 ```bash
 CHAT_REDIS_INTEGRATION=1 GOCACHE=/tmp/go-build GOMODCACHE=/tmp/go-mod go test ./internal/cache ./internal/service ./internal/wsbus -run 'Redis|Cache' -count=1
+CHAT_KAFKA_INTEGRATION=1 GOCACHE=/tmp/go-build GOMODCACHE=/tmp/go-mod go test ./internal/wsbus -run 'Kafka' -count=1
 ```

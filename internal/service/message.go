@@ -23,6 +23,8 @@ var MessageService = new(messageService)
 type ConversationMessageResult struct {
 	Message     dto.MessageOutput
 	ReceiverIDs []uint
+	// ConversationID 是内部会话 ID，推送时作为总线的顺序域键（同会话事件保序）。
+	ConversationID uint
 	// ClientMsgID 用于 ACK 关联客户端本地消息；非空时也会落库参与幂等去重。
 	ClientMsgID string
 	// TargetType/TargetID 是发送方视角的会话目标，推送给发送方其他设备时使用。
@@ -35,6 +37,8 @@ type ConversationMessageResult struct {
 type MessageReadResult struct {
 	Event       dto.MessageReadOutput
 	ReceiverIDs []uint
+	// ConversationID 作为总线顺序域键：已读事件与同会话的消息推送保持相对顺序。
+	ConversationID uint
 }
 
 func (s *messageService) SendConversationMessage(ctx context.Context, senderID uint, input dto.SendMessageInput) (*ConversationMessageResult, error) {
@@ -112,21 +116,23 @@ func (s *messageService) SendConversationMessage(ctx context.Context, senderID u
 	}
 
 	return &ConversationMessageResult{
-		Message:     toMessageOutput(*message),
-		ReceiverIDs: receiverIDs,
-		ClientMsgID: clientMsgID,
-		TargetType:  input.TargetType,
-		TargetID:    input.TargetID,
+		Message:        toMessageOutput(*message),
+		ReceiverIDs:    receiverIDs,
+		ConversationID: conversation.ID,
+		ClientMsgID:    clientMsgID,
+		TargetType:     input.TargetType,
+		TargetID:       input.TargetID,
 	}, nil
 }
 
 func (s *messageService) duplicateMessageResult(message *model.Message, clientMsgID string, input dto.SendMessageInput) (*ConversationMessageResult, error) {
 	return &ConversationMessageResult{
-		Message:     toMessageOutput(*message),
-		ClientMsgID: clientMsgID,
-		TargetType:  input.TargetType,
-		TargetID:    input.TargetID,
-		Duplicate:   true,
+		Message:        toMessageOutput(*message),
+		ConversationID: message.ConversationID,
+		ClientMsgID:    clientMsgID,
+		TargetType:     input.TargetType,
+		TargetID:       input.TargetID,
+		Duplicate:      true,
 	}, nil
 }
 
@@ -227,7 +233,8 @@ func (s *messageService) MarkMessageRead(ctx context.Context, userID uint, input
 			MessageID:  input.MessageID,
 			ReaderID:   userID,
 		},
-		ReceiverIDs: receiverIDs,
+		ReceiverIDs:    receiverIDs,
+		ConversationID: conversation.ID,
 	}, nil
 }
 

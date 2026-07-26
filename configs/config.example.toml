@@ -45,3 +45,11 @@ addr = "0.0.0.0:9090"
 host = "0.0.0.0"
 port = 8081
 logic_addr = "127.0.0.1:9090"
+
+# 事件总线（拆分部署）：enabled=false 时退回 Redis Pub/Sub。
+# 本地集成测试用宿主机 listener：brokers = ["127.0.0.1:29092"]
+[kafka]
+enabled = false
+brokers = ["127.0.0.1:29092"]
+topic = "chat.events"
+partitions = 8

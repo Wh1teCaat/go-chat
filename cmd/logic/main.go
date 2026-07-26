@@ -79,9 +79,20 @@ func main() {
 	service.InitPresenceStore(presenceStore)
 	controller.InitHealthCheckers(buildDBPing(db), buildRedisPing(redisClient))
 
-	// logic 只发布不订阅：它不持有连接，投递发生在 gateway。fallback 传 nil，
-	// Redis 故障期间的推送靠客户端重连补拉兜底。
-	bus := wsbus.NewRedisPublisher(redisClient, nil)
+	// logic 只发布不订阅：它不持有连接，投递发生在 gateway。
+	// 默认走 Kafka（持久化事件流，可挂离线推送/轨迹等新消费者）；
+	// kafka.enabled=false 时退回 Redis Pub/Sub（阶段 2 形态）。
+	var bus wsbus.Bus
+	if cfg.Kafka.Enabled {
+		if err := wsbus.EnsureTopic(context.Background(), cfg.Kafka.Brokers, cfg.Kafka.Topic, cfg.Kafka.Partitions); err != nil {
+			logger.Error("Failed to ensure kafka topic", logger.Any("error", err))
+			os.Exit(1)
+		}
+		bus = wsbus.NewKafkaPublisher(cfg.Kafka.Brokers, cfg.Kafka.Topic)
+		logger.Info("Kafka event bus enabled", logger.String("topic", cfg.Kafka.Topic))
+	} else {
+		bus = wsbus.NewRedisPublisher(redisClient, nil)
+	}
 	controller.InitWSBus(bus)
 
 	// gRPC 面向 gateway 暴露消息发送。
@@ -135,6 +146,9 @@ func main() {
 		}
 		// GracefulStop 等待进行中的 RPC 结束，保证 gateway 不会收到半途中断的响应。
 		grpcServer.GracefulStop()
+		if err := bus.Close(); err != nil {
+			logger.Warn("WS bus close failed", logger.Any("error", err))
+		}
 		logger.Info("chat-logic stopped gracefully")
 	}
 }

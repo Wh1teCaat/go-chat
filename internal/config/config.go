@@ -18,6 +18,15 @@ type Config struct {
 	RateLimit RateLimitConfig `mapstructure:"rate_limit"`
 	GRPC      GRPCConfig      `mapstructure:"grpc"`
 	Gateway   GatewayConfig   `mapstructure:"gateway"`
+	Kafka     KafkaConfig     `mapstructure:"kafka"`
+}
+
+// KafkaConfig 是拆分部署的事件总线配置。enabled=false 时退回 Redis Pub/Sub 总线。
+type KafkaConfig struct {
+	Enabled    bool     `mapstructure:"enabled"`
+	Brokers    []string `mapstructure:"brokers"`
+	Topic      string   `mapstructure:"topic"`
+	Partitions int      `mapstructure:"partitions"`
 }
 
 // GRPCConfig 是 chat-logic 的 gRPC 监听配置（拆分部署时使用）。
@@ -128,6 +137,10 @@ func Load() (*Config, error) {
 	v.SetDefault("gateway.host", "0.0.0.0")
 	v.SetDefault("gateway.port", 8081)
 	v.SetDefault("gateway.logic_addr", "127.0.0.1:9090")
+	v.SetDefault("kafka.enabled", false)
+	v.SetDefault("kafka.brokers", []string{"127.0.0.1:29092"})
+	v.SetDefault("kafka.topic", "chat.events")
+	v.SetDefault("kafka.partitions", 8)
 
 	if err := v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {

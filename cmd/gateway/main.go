@@ -5,7 +5,10 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -61,10 +64,29 @@ func main() {
 	hub.SetPresenceStore(presence.NewRedisStore(redisClient))
 
 	// 订阅总线：logic 发布的推送经这里投递给本实例的在线连接。
-	bus, err := wsbus.NewRedisBus(context.Background(), redisClient, hub)
-	if err != nil {
-		logger.Error("Failed to initialize ws bus", logger.Any("error", err))
-		os.Exit(1)
+	// Kafka 模式下每个 gateway 实例用独立消费组（广播语义），组名带主机名保证唯一。
+	var bus wsbus.Bus
+	if cfg.Kafka.Enabled {
+		if err := wsbus.EnsureTopic(context.Background(), cfg.Kafka.Brokers, cfg.Kafka.Topic, cfg.Kafka.Partitions); err != nil {
+			logger.Error("Failed to ensure kafka topic", logger.Any("error", err))
+			os.Exit(1)
+		}
+		// NewKafkaBus 会阻塞到消费组完成 join 且链路端到端可投递才返回，
+		// 保证下面开始接受 WebSocket 连接时不存在"事件被 latest 位点跳过"的窗口。
+		kafkaBus, err := wsbus.NewKafkaBus(context.Background(), cfg.Kafka.Brokers, cfg.Kafka.Topic, gatewayGroupID(), hub)
+		if err != nil {
+			logger.Error("Failed to initialize kafka bus", logger.Any("error", err))
+			os.Exit(1)
+		}
+		bus = kafkaBus
+		logger.Info("Kafka event bus enabled", logger.String("topic", cfg.Kafka.Topic))
+	} else {
+		redisBus, err := wsbus.NewRedisBus(context.Background(), redisClient, hub)
+		if err != nil {
+			logger.Error("Failed to initialize ws bus", logger.Any("error", err))
+			os.Exit(1)
+		}
+		bus = redisBus
 	}
 
 	// gRPC 连接 chat-logic。内网服务间调用，暂用明文；上生产应换 mTLS。
@@ -141,6 +163,25 @@ func main() {
 		hub.CloseAll()
 		logger.Info("gateway stopped gracefully")
 	}
+}
+
+// gatewayGroupID 生成本次启动的 Kafka 消费组名，必须做到"每次启动全局唯一"：
+//   - 每实例独立组 = 广播语义（组内是分摊，同组的两个 gateway 会各丢一半事件）；
+//   - 每次启动新组 = latest 位点确定生效，重启不会重放宕机期积压
+//     （好友/群通知没有去重键，重放会产生可见的重复通知）；
+//   - 只用主机名会在裸机同机多进程时碰撞，必须叠加进程内随机后缀。
+//
+// 空闲旧组的元数据由 broker 按 offsets.retention.minutes 自动清理。
+func gatewayGroupID() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "unknown"
+	}
+	var buf [4]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return fmt.Sprintf("chat-gateway-%s-%d", host, os.Getpid())
+	}
+	return fmt.Sprintf("chat-gateway-%s-%s", host, hex.EncodeToString(buf[:]))
 }
 
 func gatewayLogPath(base string) string {

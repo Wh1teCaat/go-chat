@@ -35,8 +35,9 @@ func MarkMessageRead(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
-	// 已读回执要送达可能连在其他实例上的会话成员，走总线。
-	pushToUsers(c.Request.Context(), result.ReceiverIDs, wsEnvelope{
+	// 已读回执要送达可能连在其他实例上的会话成员，走总线；
+	// 和消息推送共用会话顺序键，保证"先见消息、后见已读"的相对顺序。
+	pushToUsers(c.Request.Context(), conversationKey(result.ConversationID), result.ReceiverIDs, wsEnvelope{
 		Type: dto.WSMessageTypeMessageRead,
 		Data: result.Event,
 	})

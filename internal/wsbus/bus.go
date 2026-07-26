@@ -12,12 +12,15 @@ import (
 // Bus 是跨实例的 WebSocket 消息总线。多实例部署时，接收方可能连在别的实例上，
 // 推送必须经过总线广播；单实例或无 Redis 时退化为进程内直投。
 //
-// 可靠性边界：Pub/Sub 是 fire-and-forget，订阅端掉线期间的消息不会重放。
-// 消息可达性不依赖总线——消息先落库，客户端重连后用 afterMessageID 增量补拉兜底，
-// 总线只负责"在线时的实时性"。
+// 可靠性边界：总线只负责"在线时的实时性"，消息可达性不依赖总线——
+// 消息先落库，客户端重连后用 afterMessageID 增量补拉兜底。
+// Redis Pub/Sub 实现是 fire-and-forget；Kafka 实现有持久化和消费位点，
+// 但订阅端（gateway）以 latest 位点加入，语义上仍按"掉线期间靠补拉"设计。
 type Bus interface {
 	// Publish 把 payload 推送给 userIDs 的所有在线连接（可能分布在多个实例）。
-	Publish(ctx context.Context, userIDs []uint, payload any) error
+	// key 声明事件的顺序域（同 key 的事件保序投递），如 "conv:<会话ID>"；
+	// Kafka 实现用它做分区键，Local/Redis 实现全局有序、忽略该参数。
+	Publish(ctx context.Context, key string, userIDs []uint, payload any) error
 	Close() error
 }
 
@@ -35,7 +38,7 @@ func NewLocalBus(hub Sender) *LocalBus {
 	return &LocalBus{hub: hub}
 }
 
-func (b *LocalBus) Publish(_ context.Context, userIDs []uint, payload any) error {
+func (b *LocalBus) Publish(_ context.Context, _ string, userIDs []uint, payload any) error {
 	b.hub.SendToMany(userIDs, payload)
 	return nil
 }
@@ -52,6 +55,8 @@ const redisChannel = "ws:events"
 type busEnvelope struct {
 	UserIDs []uint          `json:"user_ids"`
 	Payload json.RawMessage `json:"payload"`
+	// Probe 标记就绪探针事件：KafkaBus 启动时用它验证发布→消费链路，消费端不投递。
+	Probe bool `json:"probe,omitempty"`
 }
 
 // RedisBus 用 Redis Pub/Sub 做跨实例广播。
@@ -82,7 +87,7 @@ func NewRedisBus(ctx context.Context, client *redis.Client, hub Sender) (*RedisB
 	return b, nil
 }
 
-func (b *RedisBus) Publish(ctx context.Context, userIDs []uint, payload any) error {
+func (b *RedisBus) Publish(ctx context.Context, _ string, userIDs []uint, payload any) error {
 	if len(userIDs) == 0 {
 		return nil
 	}

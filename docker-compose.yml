@@ -31,6 +31,42 @@ services:
       timeout: 3s
       retries: 20
 
+  # Kafka：拆分部署的事件总线（KRaft 单节点，无 ZooKeeper）。
+  # 双 listener：容器网络内走 kafka:9092，宿主机（本地开发/集成测试）走 localhost:29092。
+  kafka:
+    image: apache/kafka:3.9.1
+    container_name: chat-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,PLAINTEXT_HOST://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      # 空闲消费组的元数据 1 天后清理，缓解 gateway 每次启动一个新组的累积。
+      KAFKA_OFFSETS_RETENTION_MINUTES: 1440
+      # topic 只由应用的 EnsureTopic 显式创建（带分区数），
+      # 关掉自动建 topic 防止首条消息把 topic 建成 1 分区。
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      # 数据目录必须显式指向挂载卷：apache/kafka 镜像在设置了任何 KAFKA_* 环境变量后
+      # 会整体丢弃默认配置文件，不设置 log.dirs 会落到 /tmp，卷挂载形同虚设。
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    ports:
+      - "29092:29092"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
   # chat-logic：业务层（REST + gRPC + 消息落库/推送编排）
   logic:
     build:
@@ -42,6 +78,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
     volumes:
       # 容器内使用 Docker 专用配置，避免靠环境变量覆盖数据库和 Redis 地址。
@@ -62,6 +100,8 @@ services:
       replicas: 2
     depends_on:
       redis:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
       logic:
         condition: service_started
@@ -97,3 +137,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  kafka_data:

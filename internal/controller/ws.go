@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -31,13 +32,20 @@ func InitWSBus(bus wsbus.Bus) {
 }
 
 // pushToUsers 把 envelope 推给目标用户的所有在线连接（可能分布在多个实例）。
+// key 是事件的顺序域（同 key 保序，Kafka 实现用作分区键）：会话事件用 "conv:<id>"，
+// 用户级通知用 "user:<id>"，群通知用 "group:<id>"。
 // 总线故障不影响主流程：消息已落库，离线端靠重连补拉兜底。
-func pushToUsers(ctx context.Context, userIDs []uint, envelope wsEnvelope) {
-	if err := wsBus.Publish(ctx, userIDs, envelope); err != nil {
+func pushToUsers(ctx context.Context, key string, userIDs []uint, envelope wsEnvelope) {
+	if err := wsBus.Publish(ctx, key, userIDs, envelope); err != nil {
 		logger.Warn("WSPushPublishFailed",
 			logger.String("type", string(envelope.Type)),
+			logger.String("key", key),
 			logger.String("error", err.Error()))
 	}
+}
+
+func conversationKey(conversationID uint) string {
+	return fmt.Sprintf("conv:%d", conversationID)
 }
 
 var wsAllowedOrigins = map[string]struct{}{}
@@ -138,7 +146,7 @@ func pushConversationMessage(ctx context.Context, senderID uint, result *service
 		receiverMessage.TargetID = senderID
 	}
 	// 接收方不需要主动拉取；服务端推送到达后，浏览器端 onmessage 回调会被触发。
-	pushToUsers(ctx, result.ReceiverIDs, wsEnvelope{
+	pushToUsers(ctx, conversationKey(result.ConversationID), result.ReceiverIDs, wsEnvelope{
 		Type: dto.WSMessageTypeMessage,
 		Data: receiverMessage,
 	})
@@ -149,7 +157,7 @@ func pushConversationMessage(ctx context.Context, senderID uint, result *service
 	senderMessage.TargetType = result.TargetType
 	senderMessage.TargetID = result.TargetID
 	senderMessage.ClientMsgID = result.ClientMsgID
-	pushToUsers(ctx, []uint{senderID}, wsEnvelope{
+	pushToUsers(ctx, conversationKey(result.ConversationID), []uint{senderID}, wsEnvelope{
 		Type: dto.WSMessageTypeMessage,
 		Data: senderMessage,
 	})

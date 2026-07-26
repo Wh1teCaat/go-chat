@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
 	"chat_proj/internal/dto"
 	"chat_proj/internal/service"
@@ -93,7 +94,7 @@ func notifyGroupJoinRequest(ctx context.Context, request *dto.GroupJoinRequestOu
 			logger.String("error", err.Error()))
 		return
 	}
-	pushToUsers(ctx, approverIDs, wsEnvelope{
+	pushToUsers(ctx, fmt.Sprintf("group:%d", request.GroupID), approverIDs, wsEnvelope{
 		Type: dto.WSMessageTypeGroupJoinRequest,
 		Data: request,
 	})

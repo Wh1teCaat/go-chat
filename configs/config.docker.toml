@@ -37,7 +37,7 @@ enabled = true
 requests = 120
 window_seconds = 60
 
-# 拆分部署（chat-logic + chat-gateway）配置；单体二进制忽略这两段。
+# 拆分部署（chat-logic + chat-gateway）配置；单体二进制忽略以下段落。
 [grpc]
 addr = "0.0.0.0:9090"
 
@@ -45,3 +45,11 @@ addr = "0.0.0.0:9090"
 host = "0.0.0.0"
 port = 8081
 logic_addr = "logic:9090"
+
+# 事件总线：logic 发布、各 gateway 实例独立消费组订阅。
+# enabled=false 时退回 Redis Pub/Sub（阶段 2 形态）。
+[kafka]
+enabled = true
+brokers = ["kafka:9092"]
+topic = "chat.events"
+partitions = 8
