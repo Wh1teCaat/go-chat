@@ -35,7 +35,8 @@ func MarkMessageRead(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
-	WSHub.SendToMany(result.ReceiverIDs, wsEnvelope{
+	// 已读回执要送达可能连在其他实例上的会话成员，走总线。
+	pushToUsers(c.Request.Context(), result.ReceiverIDs, wsEnvelope{
 		Type: dto.WSMessageTypeMessageRead,
 		Data: result.Event,
 	})

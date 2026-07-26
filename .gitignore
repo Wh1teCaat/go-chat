@@ -4,3 +4,4 @@ logs/
 coverage.out
 web/node_modules/
 configs/config.toml
+.claude/

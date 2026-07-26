@@ -106,7 +106,7 @@ func AddFriend(c *gin.Context) {
 		return
 	}
 	if result != nil {
-		WSHub.SendTo(result.ReceiverID, wsEnvelope{
+		pushToUsers(c.Request.Context(), []uint{result.ReceiverID}, wsEnvelope{
 			Type: dto.WSMessageTypeFriendRequest,
 			Data: result.Request,
 		})

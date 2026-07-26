@@ -93,7 +93,7 @@ func notifyGroupJoinRequest(ctx context.Context, request *dto.GroupJoinRequestOu
 			logger.String("error", err.Error()))
 		return
 	}
-	WSHub.SendToMany(approverIDs, wsEnvelope{
+	pushToUsers(ctx, approverIDs, wsEnvelope{
 		Type: dto.WSMessageTypeGroupJoinRequest,
 		Data: request,
 	})

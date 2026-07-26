@@ -9,6 +9,7 @@ import (
 	"chat_proj/internal/dto"
 	"chat_proj/internal/service"
 	"chat_proj/internal/ws"
+	"chat_proj/internal/wsbus"
 	"chat_proj/pkg/apperrors"
 	"chat_proj/pkg/logger"
 
@@ -18,6 +19,26 @@ import (
 )
 
 var WSHub = ws.NewHub()
+
+// wsBus 是跨实例消息总线。默认进程内直投（单实例/测试）；
+// 多实例部署时 main 会注入 RedisBus，推送经 Redis Pub/Sub 广播到所有实例。
+var wsBus wsbus.Bus = wsbus.NewLocalBus(WSHub)
+
+func InitWSBus(bus wsbus.Bus) {
+	if bus != nil {
+		wsBus = bus
+	}
+}
+
+// pushToUsers 把 envelope 推给目标用户的所有在线连接（可能分布在多个实例）。
+// 总线故障不影响主流程：消息已落库，离线端靠重连补拉兜底。
+func pushToUsers(ctx context.Context, userIDs []uint, envelope wsEnvelope) {
+	if err := wsBus.Publish(ctx, userIDs, envelope); err != nil {
+		logger.Warn("WSPushPublishFailed",
+			logger.String("type", string(envelope.Type)),
+			logger.String("error", err.Error()))
+	}
+}
 
 var wsAllowedOrigins = map[string]struct{}{}
 
@@ -85,7 +106,9 @@ func handleWSMessage(ctx context.Context, senderID uint, payload []byte) error {
 		return err
 	}
 
-	// ACK 只发给发送者，用来确认消息已经落库。完整消息会单独推给接收者，ACK 只需要服务端消息 ID。
+	// ACK 只对发起发送的那个连接有意义（靠 clientMsgID 对上本地"发送中"的消息），
+	// 而发起连接必然在本实例上，所以 ACK 走本地 Hub 直投，不经过总线；
+	// 发送者其他实例上的设备会通过下面的消息推送拿到完整消息。
 	WSHub.SendTo(senderID, wsEnvelope{
 		Type: dto.WSMessageTypeMessageAck,
 		Data: dto.MessageAckOutput{
@@ -108,7 +131,7 @@ func handleWSMessage(ctx context.Context, senderID uint, payload []byte) error {
 		receiverMessage.TargetID = senderID
 	}
 	// 接收方不需要主动拉取；服务端推送到达后，浏览器端 onmessage 回调会被触发。
-	WSHub.SendToMany(result.ReceiverIDs, wsEnvelope{
+	pushToUsers(ctx, result.ReceiverIDs, wsEnvelope{
 		Type: dto.WSMessageTypeMessage,
 		Data: receiverMessage,
 	})
@@ -119,7 +142,7 @@ func handleWSMessage(ctx context.Context, senderID uint, payload []byte) error {
 	senderMessage.TargetType = result.TargetType
 	senderMessage.TargetID = result.TargetID
 	senderMessage.ClientMsgID = result.ClientMsgID
-	WSHub.SendTo(senderID, wsEnvelope{
+	pushToUsers(ctx, []uint{senderID}, wsEnvelope{
 		Type: dto.WSMessageTypeMessage,
 		Data: senderMessage,
 	})
@@ -144,6 +167,7 @@ func sendWSError(userID uint, clientMsgID string, err error) {
 	}
 
 	// websocket 升级后不能再用 HTTP 状态码表达错误，所以把 status/code/message 放进错误 envelope。
+	// 错误和 ACK 一样只对发起连接有意义，走本地 Hub，不经过总线。
 	WSHub.SendTo(userID, wsEnvelope{Type: dto.WSMessageTypeError, Data: wsErrorData(err, clientMsgID)})
 }
 

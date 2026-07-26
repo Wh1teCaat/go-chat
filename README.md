@@ -7,6 +7,7 @@
 - 后端：Gin + GORM + PostgreSQL，REST 接口处理账号、好友、群组、消息列表和文件上传下载。
 - 认证：JWT access token + refresh token。refresh token 带 jti，服务端用 Redis allowlist 管理（无 Redis 时退回内存）；每次刷新轮换并吊销旧 token，重放返回 401；`/v1/user/logout` 吊销 refresh token。WebSocket 通过 `Sec-WebSocket-Protocol` 的 `bearer.<token>` 条目认证，token 不进 URL。前端会在 access token 过期前主动刷新，接口遇到 401 时也会自动刷新后重试。
 - 实时消息：Gorilla WebSocket。客户端发消息后服务端落库并返回 `message_ack`，前端据此展示发送中/已发送/发送失败/已读状态。`clientMsgID` 参与服务端幂等去重（`(sender_id, client_msg_id)` 唯一索引），ACK 丢失重发不会重复落库。消息本体推送给接收方和发送者的全部连接（多标签页/多设备同步），推送带接收端视角的 `targetType`/`targetID`。前端断线后指数退避自动重连，重连成功用 `afterMessageID` 增量补拉断线期间的消息。
+- 多实例：推送经 `internal/wsbus` 总线路由——启用 Redis 时走 Pub/Sub 全局频道广播，每个实例只投递本地在线用户，支持多实例水平扩展；无 Redis 时退化为进程内直投。ACK/错误只对发起连接有意义，始终本地直投。设计取舍见 [docs/design/01-multi-instance-ws.md](docs/design/01-multi-instance-ws.md)。
 - 缓存：Redis 可选开启；当前用于限流计数、用户资料缓存、群资料缓存、在线状态和 refresh token allowlist，Redis 不可用时退回内存实现。
 - 运维：`GET /health` 健康检查（数据库不可用返回 503）；收到 SIGINT/SIGTERM 后优雅停机（停止监听、等待存量请求、关闭全部 WebSocket 连接）。
 - 文件：默认使用本地存储 `uploads/`；头像可通过 `/uploads/...` 公开访问，聊天附件必须走 `/v1/file/:id/download` 鉴权下载，普通附件支持图片、PDF、Word、TXT 和 ZIP。
@@ -25,6 +26,7 @@ flowchart LR
     Storage --> Local[("本地 uploads/")]
     Gin --> Goose["goose migrations"]
     Goose --> PG
+    WSHub <-->|"wsbus Pub/Sub 广播（多实例路由）"| Redis
 ```
 
 ## 目录结构
@@ -44,6 +46,7 @@ internal/router/      路由注册
 internal/service/     业务逻辑
 internal/storage/     文件存储抽象和本地磁盘实现；后续可扩展 MinIO/OSS
 internal/ws/          WebSocket Hub 和连接生命周期
+internal/wsbus/       跨实例推送总线：进程内直投 / Redis Pub/Sub 广播
 migrations/           goose SQL migrations，服务启动时自动执行
 pkg/                  通用错误、日志和响应封装
 web/                  静态测试前端
@@ -234,5 +237,5 @@ node --test web/app-helpers.test.mjs
 Redis 集成测试需要本机有 Redis，并显式打开：
 
 ```bash
-CHAT_REDIS_INTEGRATION=1 GOCACHE=/tmp/go-build GOMODCACHE=/tmp/go-mod go test ./internal/cache ./internal/service -run 'Redis|Cache' -count=1
+CHAT_REDIS_INTEGRATION=1 GOCACHE=/tmp/go-build GOMODCACHE=/tmp/go-mod go test ./internal/cache ./internal/service ./internal/wsbus -run 'Redis|Cache' -count=1
 ```

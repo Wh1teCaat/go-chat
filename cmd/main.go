@@ -20,6 +20,7 @@ import (
 	"chat_proj/internal/router"
 	"chat_proj/internal/service"
 	"chat_proj/internal/storage"
+	"chat_proj/internal/wsbus"
 	"chat_proj/pkg/logger"
 
 	"github.com/gin-gonic/gin"
@@ -110,6 +111,19 @@ func run(deps appDeps) {
 	limiter := initRateLimiter(redisClient)
 	controller.InitHealthCheckers(buildDBPing(db), buildRedisPing(redisClient))
 
+	// 多实例部署时 WS 推送经 Redis Pub/Sub 广播；没有 Redis 就保持进程内直投（单实例）。
+	var bus wsbus.Bus = wsbus.NewLocalBus(controller.WSHub)
+	if redisClient != nil {
+		redisBus, err := wsbus.NewRedisBus(context.Background(), redisClient, controller.WSHub)
+		if err != nil {
+			logger.Error("Failed to initialize ws bus", logger.Any("error", err))
+			deps.exit(1)
+			return
+		}
+		bus = redisBus
+	}
+	controller.InitWSBus(bus)
+
 	server := buildServer(cfg, deps.newRouter(cfg, limiter))
 	serveErr := make(chan error, 1)
 	go func() {
@@ -134,6 +148,10 @@ func run(deps appDeps) {
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
 			logger.Warn("Server shutdown incomplete", logger.Any("error", err))
+		}
+		// 先退订总线再关本地连接，避免关闭过程中还往连接里投递跨实例消息。
+		if err := bus.Close(); err != nil {
+			logger.Warn("WS bus close failed", logger.Any("error", err))
 		}
 		controller.WSHub.CloseAll()
 		logger.Info("Server stopped gracefully")
