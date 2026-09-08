@@ -22,6 +22,7 @@ type FriendRequestResult struct {
 	Request    dto.PendingFriendRequestOutput
 }
 
+// Register 校验注册信息、加密密码并创建用户。
 func (u *userService) Register(ctx context.Context, input dto.RegisterUserInput) error {
 	if input.Email == "" || input.Password == "" {
 		return apperrors.ErrEmptyFields
@@ -56,6 +57,7 @@ func (u *userService) Register(ctx context.Context, input dto.RegisterUserInput)
 	return nil
 }
 
+// Login 校验邮箱和密码并返回用户身份信息。
 func (u *userService) Login(ctx context.Context, input dto.LoginUserInput) (*dto.LoginUserOutput, error) {
 	if input.Email == "" || input.Password == "" {
 		return nil, apperrors.ErrEmptyFields
@@ -76,6 +78,7 @@ func (u *userService) Login(ctx context.Context, input dto.LoginUserInput) (*dto
 	}, nil
 }
 
+// UpdateUserInfo 更新用户允许修改的资料并清除资料缓存。
 func (u *userService) UpdateUserInfo(ctx context.Context, id uint, input dto.UpdateUserInput) error {
 	updates := map[string]interface{}{}
 	if input.Nickname != nil {
@@ -96,6 +99,7 @@ func (u *userService) UpdateUserInfo(ctx context.Context, id uint, input dto.Upd
 
 // -- 好友关系相关方法 ----------------------------------------------------------
 
+// AddFriendByEmail 根据邮箱创建好友申请，并处理反向申请自动接受逻辑。
 func (u *userService) AddFriendByEmail(ctx context.Context, userID uint, friendEmail string) (*FriendRequestResult, error) {
 	if friendEmail == "" {
 		return nil, apperrors.WithMessage(apperrors.ErrInvalidInput, "friendEmail is required")
@@ -130,6 +134,7 @@ func (u *userService) AddFriendByEmail(ctx context.Context, userID uint, friendE
 	}, nil
 }
 
+// AcceptFriend 接受发给当前用户的待处理好友申请并建立私聊会话。
 func (u *userService) AcceptFriend(ctx context.Context, userID, requestID uint) error {
 	relation, err := repo.GetFriendRelationByID(ctx, requestID)
 	if err != nil {
@@ -173,6 +178,7 @@ func (u *userService) AcceptFriend(ctx context.Context, userID, requestID uint) 
 	})
 }
 
+// RejectFriend 拒绝发给当前用户的待处理好友申请。
 func (u *userService) RejectFriend(ctx context.Context, userID, requestID uint) error {
 	relation, err := repo.GetFriendRelationByID(ctx, requestID)
 	if err != nil {
@@ -192,6 +198,7 @@ func (u *userService) RejectFriend(ctx context.Context, userID, requestID uint) 
 	return nil
 }
 
+// RemoveFriend 删除两个用户之间的好友关系。
 func (u *userService) RemoveFriend(ctx context.Context, userID, friendID uint) error {
 	if _, err := repo.GetFriendRelationByUsers(ctx, userID, friendID); err != nil {
 		return apperrors.WithMessage(apperrors.ErrNotFound, "friend relation not found")
@@ -213,6 +220,7 @@ func (u *userService) RemoveFriend(ctx context.Context, userID, friendID uint) e
 	})
 }
 
+// ListFriends 返回用户的好友资料及当前在线状态。
 func (u *userService) ListFriends(ctx context.Context, userID uint) ([]dto.FriendOutput, error) {
 	all, err := repo.ListFriendRelationsByUserID(ctx, userID, model.FriendRelationStatusAccepted)
 	if err != nil {
@@ -254,6 +262,7 @@ func (u *userService) ListFriends(ctx context.Context, userID uint) ([]dto.Frien
 	return friends, nil
 }
 
+// ListPendingFriendRequests 返回等待用户处理的好友申请及申请人资料。
 func (u *userService) ListPendingFriendRequests(ctx context.Context, userID uint) ([]dto.PendingFriendRequestOutput, error) {
 	all, err := repo.ListFriendRelationsByUserID(ctx, userID, model.FriendRelationStatusPending)
 	if err != nil {
@@ -296,6 +305,7 @@ func (u *userService) ListPendingFriendRequests(ctx context.Context, userID uint
 	return requests, nil
 }
 
+// relationPeerID 返回一条好友关系中相对于当前用户的另一方 ID。
 func relationPeerID(relation model.FriendRelation, userID uint) uint {
 	if relation.UserID == userID {
 		return relation.FriendID
@@ -303,6 +313,7 @@ func relationPeerID(relation model.FriendRelation, userID uint) uint {
 	return relation.UserID
 }
 
+// toPendingFriendRequestOutput 将好友关系和申请人资料组合为待处理申请输出。
 func toPendingFriendRequestOutput(relation model.FriendRelation, requester model.User) dto.PendingFriendRequestOutput {
 	return dto.PendingFriendRequestOutput{
 		RequestID:      relation.ID,

@@ -35,14 +35,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: chat-backend
+    deploy:
+      replicas: 2
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"
     volumes:
       # 容器内使用 Docker 专用配置，避免靠环境变量覆盖数据库和 Redis 地址。
       - ./configs/config.docker.toml:/app/configs/config.toml:ro
@@ -50,11 +51,21 @@ services:
       - ./uploads:/app/uploads
       - ./logs:/app/logs
 
+  edge:
+    image: nginx:alpine
+    container_name: chat-edge
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+    volumes:
+      - ./deploy/nginx-multi-instance.conf:/etc/nginx/conf.d/default.conf:ro
+
   frontend:
     image: nginx:alpine
     container_name: chat-frontend
     depends_on:
-      - backend
+      - edge
     ports:
       - "5173:80"
     volumes:

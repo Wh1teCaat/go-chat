@@ -207,10 +207,12 @@ type parsedByteRange struct {
 	end   int64
 }
 
+// length 返回已解析字节范围包含的字节数。
 func (r parsedByteRange) length() int64 {
 	return r.end - r.start + 1
 }
 
+// parseRangeHeader 解析单段 HTTP Range 请求头并校验文件边界。
 func parseRangeHeader(value string, size int64) (parsedByteRange, bool, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {

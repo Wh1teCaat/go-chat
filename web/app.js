@@ -12,8 +12,12 @@ import {
   fileIconLabel,
   formatFileSize,
   buildWsUrl,
+  buildWsProtocols,
   decodeTokenUserID,
   isOwnMessage,
+  latestServerMessageID,
+  mergeIncomingMessage,
+  messageMatchesTarget,
   messagePreview,
   normalizeBaseUrl,
   normalizeChatTarget,
@@ -46,6 +50,8 @@ const state = {
   activeUpload: null,
   refreshTimer: 0,
   refreshPromise: null,
+  reconnectTimer: 0,
+  reconnectAttempts: 0,
 };
 
 const MULTIPART_UPLOAD_THRESHOLD = 2 * 1024 * 1024;
@@ -205,6 +211,7 @@ async function login(event) {
 }
 
 function logout() {
+  revokeRefreshTokenOnServer();
   disconnectWs();
   clearTokenRefreshTimer();
   state.token = "";
@@ -226,6 +233,19 @@ function logout() {
   localStorage.removeItem("chatRefreshExpireAt");
   localStorage.removeItem("chatEmail");
   showAuth("login");
+}
+
+// 登出时吊销服务端的 refresh token，失败也不阻塞本地登出（token 会随 TTL 过期）。
+function revokeRefreshTokenOnServer() {
+  if (!state.refreshToken) {
+    return;
+  }
+  fetch(`${apiBase()}/v1/user/logout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refreshToken: state.refreshToken }),
+    keepalive: true,
+  }).catch(() => {});
 }
 
 function applyAuthTokens(payload) {
@@ -431,33 +451,110 @@ function connectWs() {
   }
 
   disconnectWs();
-  state.ws = new WebSocket(buildWsUrl(apiBase(), state.token));
+  // 所有回调都校验 state.ws === ws：主动断开或重建连接后，旧 socket 迟到的事件直接忽略，
+  // 避免旧连接的 close 误清新连接、误触发重连。
+  const ws = new WebSocket(buildWsUrl(apiBase()), buildWsProtocols(state.token));
+  state.ws = ws;
   updateWsStatus("connecting");
 
-  state.ws.addEventListener("open", () => {
+  ws.addEventListener("open", () => {
+    if (state.ws !== ws) {
+      return;
+    }
     updateWsStatus("online");
+    const isReconnect = state.reconnectAttempts > 0;
+    state.reconnectAttempts = 0;
     log("WS OPEN", "连接成功");
+    if (isReconnect) {
+      resyncAfterReconnect();
+    }
   });
-  state.ws.addEventListener("message", (event) => {
+  ws.addEventListener("message", (event) => {
+    if (state.ws !== ws) {
+      return;
+    }
     const payload = safeJson(event.data);
     log("WS MESSAGE", payload);
     handleWsPayload(payload);
   });
-  state.ws.addEventListener("error", () => {
+  ws.addEventListener("error", () => {
+    if (state.ws !== ws) {
+      return;
+    }
     updateWsStatus("offline");
     log("WS ERROR", "连接错误");
   });
-  state.ws.addEventListener("close", () => {
+  ws.addEventListener("close", () => {
+    if (state.ws !== ws) {
+      return;
+    }
     updateWsStatus("offline");
     state.ws = null;
     failPendingMessages();
+    scheduleWsReconnect();
   });
 }
 
+// 断线自动重连：指数退避（1s 起步，封顶 30s）。重连成功后由 open 回调补拉断线期间的消息。
+function scheduleWsReconnect() {
+  if (!state.token || state.reconnectTimer) {
+    return;
+  }
+  const delay = Math.min(30000, 1000 * 2 ** state.reconnectAttempts);
+  state.reconnectAttempts += 1;
+  log("WS RECONNECT", `${delay}ms 后尝试第 ${state.reconnectAttempts} 次重连`);
+  state.reconnectTimer = window.setTimeout(() => {
+    state.reconnectTimer = 0;
+    connectWs();
+  }, delay);
+}
+
+// 重连成功后的增量同步：会话列表全量刷新（拿最新未读数），
+// 当前会话按本地最大服务端消息 ID 增量补拉，避免整页重新加载。
+async function resyncAfterReconnect() {
+  refreshSessions();
+  if (!state.currentTarget) {
+    return;
+  }
+  const afterID = latestServerMessageID(state.messages);
+  if (!afterID) {
+    await loadMessages();
+    return;
+  }
+  const data = await apiPost("/v1/message/list", {
+    targetType: state.currentTarget.type,
+    targetID: state.currentTarget.id,
+    afterMessageID: afterID,
+    limit: 100,
+  });
+  const missed = unwrapArray(data);
+  if (!missed.length) {
+    return;
+  }
+  let messages = state.messages;
+  for (const msg of missed) {
+    messages = mergeIncomingMessage(messages, msg).messages;
+  }
+  state.messages = sortMessagesAscending(messages);
+  renderMessages();
+  markVisibleMessagesRead();
+}
+
 function disconnectWs() {
+  if (state.reconnectTimer) {
+    window.clearTimeout(state.reconnectTimer);
+    state.reconnectTimer = 0;
+  }
+  state.reconnectAttempts = 0;
   if (state.ws) {
-    state.ws.close();
+    // 先把 state.ws 置空再关闭：回调里的 state.ws === ws 守卫会忽略这个 socket 的后续事件。
+    const ws = state.ws;
     state.ws = null;
+    try {
+      ws.close();
+    } catch {
+      // 连接可能已经关闭。
+    }
   }
   updateWsStatus("offline");
 }
@@ -537,8 +634,14 @@ function handleWsPayload(payload) {
     return;
   }
   const msg = payload.data;
-  state.messages.push(msg);
-  state.messages = sortMessagesAscending(state.messages);
+  // 推送消息带接收端视角的 targetType/targetID；不属于当前打开的会话就只刷新会话列表，
+  // 未读数和最后一条消息由会话接口给出，消息本体等切换会话时再拉。
+  if (!messageMatchesTarget(msg, state.currentTarget)) {
+    refreshSessions();
+    return;
+  }
+  // 自己其他设备发的消息、或 ACK 与推送并发到达时按 id/clientMsgID 去重合并。
+  state.messages = sortMessagesAscending(mergeIncomingMessage(state.messages, msg).messages);
   renderMessages();
   markVisibleMessagesRead();
   refreshSessions();

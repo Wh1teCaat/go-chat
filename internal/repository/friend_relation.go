@@ -20,6 +20,7 @@ func (r *Repository) CreateFriendRelation(ctx context.Context, relation *model.F
 	return r.db.WithContext(ctx).Create(relation).Error
 }
 
+// GetFriendRelationByID 根据主键查询好友关系。
 func (r *Repository) GetFriendRelationByID(ctx context.Context, id uint) (*model.FriendRelation, error) {
 	var relation model.FriendRelation
 	if err := r.db.WithContext(ctx).First(&relation, id).Error; err != nil {
@@ -39,6 +40,7 @@ func (r *Repository) GetFriendRelationByUsers(ctx context.Context, userID, frien
 	return &relation, nil
 }
 
+// UpdateFriendRelationStatusByID 仅在当前状态符合预期时原子更新好友关系状态。
 func (r *Repository) UpdateFriendRelationStatusByID(ctx context.Context, id uint, expectedStatus, newStatus string) (bool, error) {
 	result := r.db.WithContext(ctx).
 		Model(&model.FriendRelation{}).

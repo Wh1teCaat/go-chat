@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"chat_proj/internal/config"
@@ -9,11 +10,116 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// RedisStore 使用 Redis 保存缓存和刷新令牌状态。
+type RedisStore struct{ client *redis.Client }
+
+func NewRedisStore(client *redis.Client) *RedisStore { return &RedisStore{client: client} }
+
+// ready 检查存储依赖是否已注入。
+func (s *RedisStore) ready() error {
+	if s == nil || s.client == nil {
+		return errors.New("redis store is not initialized")
+	}
+	return nil
+}
+
+// GetString 读取字符串，区分空值和未命中。
+func (s *RedisStore) GetString(ctx context.Context, key string) (string, bool, error) {
+	if err := s.ready(); err != nil {
+		return "", false, err
+	}
+	v, err := s.client.Get(ctx, key).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", false, nil
+	}
+	return v, err == nil, err
+}
+
+// SetString 保存字符串并设置有效期。
+func (s *RedisStore) SetString(ctx context.Context, key, value string, ttl time.Duration) error {
+	if err := s.ready(); err != nil {
+		return err
+	}
+	if ttl.Milliseconds() <= 0 {
+		return errors.New("TTL must be at least one millisecond")
+	}
+	return s.client.Set(ctx, key, value, ttl).Err()
+}
+
+// GetHash 读取 Hash 的完整字段集合。
+func (s *RedisStore) GetHash(ctx context.Context, key string) (map[string]string, bool, error) {
+	if err := s.ready(); err != nil {
+		return nil, false, err
+	}
+	fields, err := s.client.HGetAll(ctx, key).Result()
+	return fields, len(fields) > 0 && err == nil, err
+}
+
+var replaceHashScript = redis.NewScript(`
+redis.call("DEL",KEYS[1])
+for i=2,#ARGV,2 do
+ redis.call("HSET",KEYS[1],ARGV[i],ARGV[i+1])
+end
+redis.call("PEXPIRE",KEYS[1],ARGV[1])
+return 1
+`)
+
+// SetHash 原子替换有限大小的字段快照，并设置 TTL。
+func (s *RedisStore) SetHash(ctx context.Context, key string, fields map[string]string, ttl time.Duration) error {
+	if err := s.ready(); err != nil {
+		return err
+	}
+	if ttl.Milliseconds() <= 0 || len(fields) == 0 || len(fields) > 128 {
+		return errors.New("positive TTL and 1..128 hash fields required")
+	}
+	args := []any{ttl.Milliseconds()}
+	for k, v := range fields {
+		args = append(args, k, v)
+	}
+	return replaceHashScript.Run(ctx, s.client, []string{key}, args...).Err()
+}
+
+// Delete 删除指定键。
+func (s *RedisStore) Delete(ctx context.Context, keys ...string) error {
+	if err := s.ready(); err != nil {
+		return err
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	return s.client.Del(ctx, keys...).Err()
+}
+
+var rotateStringScript = redis.NewScript(`
+if redis.call("GET",KEYS[1]) ~= ARGV[1] then return 0 end
+if not redis.call("SET",KEYS[2],ARGV[2],"PX",ARGV[3],"NX") then return -1 end
+redis.call("DEL",KEYS[1])
+return 1
+`)
+
+// RotateString 校验旧值后原子替换键，新键冲突时保留旧键。
+func (s *RedisStore) RotateString(ctx context.Context, oldKey, newKey, expected, value string, ttl time.Duration) (bool, error) {
+	if err := s.ready(); err != nil {
+		return false, err
+	}
+	if oldKey == newKey || ttl.Milliseconds() <= 0 {
+		return false, errors.New("distinct keys and positive TTL required")
+	}
+	n, err := rotateStringScript.Run(ctx, s.client, []string{oldKey, newKey}, expected, value, ttl.Milliseconds()).Int()
+	if err != nil {
+		return false, err
+	}
+	if n == -1 {
+		return false, errors.New("new token key already exists")
+	}
+	return n == 1, nil
+}
+
 // NewRedisClient 根据配置创建 Redis 客户端。
-// Redis 是可选依赖：未开启时返回 nil，调用方继续使用内存实现，方便本地开发和测试。
+// Redis 是必需依赖，禁用或连接失败时拒绝启动。
 func NewRedisClient(ctx context.Context, cfg config.RedisConfig) (*redis.Client, error) {
 	if !cfg.Enabled {
-		return nil, nil
+		return nil, errors.New("redis must be enabled")
 	}
 
 	client := redis.NewClient(&redis.Options{

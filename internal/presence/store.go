@@ -41,6 +41,7 @@ func newMemoryStore(ttl time.Duration) *MemoryStore {
 	}
 }
 
+// Connect 在内存中登记用户的一条在线连接并设置过期时间。
 func (s *MemoryStore) Connect(ctx context.Context, userID uint, connectionID string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -59,6 +60,7 @@ func (s *MemoryStore) Connect(ctx context.Context, userID uint, connectionID str
 	return nil
 }
 
+// Disconnect 从内存中移除用户的一条在线连接。
 func (s *MemoryStore) Disconnect(ctx context.Context, userID uint, connectionID string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -77,6 +79,7 @@ func (s *MemoryStore) Disconnect(ctx context.Context, userID uint, connectionID 
 	return nil
 }
 
+// Refresh 延长内存中指定在线连接的有效期。
 func (s *MemoryStore) Refresh(ctx context.Context, userID uint, connectionID string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -97,6 +100,7 @@ func (s *MemoryStore) Refresh(ctx context.Context, userID uint, connectionID str
 	return nil
 }
 
+// ListOnline 批量查询用户在内存状态存储中的在线情况。
 func (s *MemoryStore) ListOnline(ctx context.Context, userIDs []uint) (map[uint]bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -134,6 +138,7 @@ func NewRedisStore(client *redis.Client) *RedisStore {
 	}
 }
 
+// Connect 在 Redis 中登记用户连接，并同时设置连接和用户集合的有效期。
 func (s *RedisStore) Connect(ctx context.Context, userID uint, connectionID string) error {
 	if s == nil || s.client == nil || userID == 0 || connectionID == "" {
 		return nil
@@ -147,6 +152,7 @@ func (s *RedisStore) Connect(ctx context.Context, userID uint, connectionID stri
 	return err
 }
 
+// Disconnect 从 Redis 中移除连接，并清理不再包含有效连接的用户集合。
 func (s *RedisStore) Disconnect(ctx context.Context, userID uint, connectionID string) error {
 	if s == nil || s.client == nil || userID == 0 || connectionID == "" {
 		return nil
@@ -170,6 +176,7 @@ func (s *RedisStore) Disconnect(ctx context.Context, userID uint, connectionID s
 	return s.client.Expire(ctx, setKey, s.ttl).Err()
 }
 
+// Refresh 延长 Redis 中连接标记和用户连接集合的有效期。
 func (s *RedisStore) Refresh(ctx context.Context, userID uint, connectionID string) error {
 	if s == nil || s.client == nil || userID == 0 || connectionID == "" {
 		return nil
@@ -182,6 +189,7 @@ func (s *RedisStore) Refresh(ctx context.Context, userID uint, connectionID stri
 	return err
 }
 
+// ListOnline 批量查询用户在 Redis 状态存储中的在线情况。
 func (s *RedisStore) ListOnline(ctx context.Context, userIDs []uint) (map[uint]bool, error) {
 	result := make(map[uint]bool, len(userIDs))
 	if s == nil || s.client == nil {
@@ -200,6 +208,7 @@ func (s *RedisStore) ListOnline(ctx context.Context, userIDs []uint) (map[uint]b
 	return result, nil
 }
 
+// userOnline 清理失效连接后判断指定用户是否仍有活跃连接。
 func (s *RedisStore) userOnline(ctx context.Context, userID uint) (bool, error) {
 	if userID == 0 {
 		return false, nil
@@ -242,10 +251,12 @@ func (s *RedisStore) userOnline(ctx context.Context, userID uint) (bool, error) 
 	return true, s.client.Expire(ctx, setKey, s.ttl).Err()
 }
 
+// userSetKey 返回保存用户连接集合的 Redis 键。
 func userSetKey(userID uint) string {
 	return fmt.Sprintf("presence:user:%d:connections", userID)
 }
 
+// connectionKey 返回保存单条连接心跳状态的 Redis 键。
 func connectionKey(connectionID string) string {
 	return "presence:connection:" + connectionID
 }

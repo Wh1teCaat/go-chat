@@ -20,8 +20,11 @@ var publicRoutes = map[string]struct{}{
 	http.MethodPost + " /v1/user/register": {},
 	http.MethodPost + " /v1/user/login":    {},
 	http.MethodPost + " /v1/user/refresh":  {},
+	// logout 只依赖 body 里的 refresh token，access token 过期后也要能登出。
+	http.MethodPost + " /v1/user/logout": {},
 }
 
+// RequestID 为请求复用或生成唯一标识，并写入响应头和上下文。
 func RequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		requestID := strings.TrimSpace(c.GetHeader("X-Request-ID"))
@@ -35,6 +38,7 @@ func RequestID() gin.HandlerFunc {
 	}
 }
 
+// RequestLogger 在请求结束后记录访问日志和处理耗时。
 func RequestLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
@@ -52,6 +56,7 @@ func RequestLogger() gin.HandlerFunc {
 	}
 }
 
+// CORS 根据允许来源列表设置跨域响应头并处理预检请求。
 func CORS(allowedOrigins []string) gin.HandlerFunc {
 	originSet := map[string]struct{}{}
 	for _, origin := range allowedOrigins {
@@ -81,6 +86,7 @@ func CORS(allowedOrigins []string) gin.HandlerFunc {
 	}
 }
 
+// RateLimit 按客户端维度限制指定时间窗口内的请求次数。
 func RateLimit(limiter ratelimit.Limiter, limit int, window time.Duration) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Method == http.MethodOptions || limiter == nil || limit <= 0 || window <= 0 {
@@ -114,6 +120,7 @@ func RateLimit(limiter ratelimit.Limiter, limit int, window time.Duration) gin.H
 	}
 }
 
+// AuthRequired 校验请求令牌并把用户身份写入 Gin 上下文。
 func AuthRequired() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Method == http.MethodOptions {
@@ -128,7 +135,10 @@ func AuthRequired() gin.HandlerFunc {
 
 		tokenString := bearerToken(c.GetHeader("Authorization"))
 		if tokenString == "" {
-			tokenString = strings.TrimSpace(c.Query("token"))
+			// 浏览器 WebSocket API 无法自定义 Authorization header，
+			// 约定客户端把 token 放进 Sec-WebSocket-Protocol 的 "bearer.<token>" 条目。
+			// 不再接受 query string 传 token，避免 token 进入访问日志和浏览器历史。
+			tokenString = wsProtocolToken(c.GetHeader("Sec-WebSocket-Protocol"))
 		}
 		if tokenString == "" {
 			response.Error(c, apperrors.ErrUnauthorized)
@@ -148,6 +158,18 @@ func AuthRequired() gin.HandlerFunc {
 	}
 }
 
+// wsProtocolToken 从 Sec-WebSocket-Protocol 头里解析 "bearer.<token>" 条目。
+func wsProtocolToken(header string) string {
+	for part := range strings.SplitSeq(header, ",") {
+		part = strings.TrimSpace(part)
+		if token, ok := strings.CutPrefix(part, "bearer."); ok {
+			return token
+		}
+	}
+	return ""
+}
+
+// bearerToken 从 Authorization 请求头中提取 Bearer 令牌。
 func bearerToken(header string) string {
 	const prefix = "Bearer "
 	if !strings.HasPrefix(header, prefix) {

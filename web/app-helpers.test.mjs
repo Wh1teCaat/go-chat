@@ -12,11 +12,15 @@ import {
   fileIconLabel,
   formatFileSize,
   buildWsUrl,
+  buildWsProtocols,
   applyMessageAck,
   applyMessageFailure,
   applyMessageRead,
   decodeTokenUserID,
   isOwnMessage,
+  latestServerMessageID,
+  mergeIncomingMessage,
+  messageMatchesTarget,
   messagePreview,
   normalizeBaseUrl,
   normalizeChatTarget,
@@ -30,14 +34,64 @@ test("normalizeBaseUrl trims spaces and trailing slashes", () => {
   assert.equal(normalizeBaseUrl(""), "http://localhost:8080");
 });
 
-test("buildWsUrl converts http base URL and appends token", () => {
+test("buildWsUrl converts http base URL without leaking token", () => {
+  assert.equal(buildWsUrl("http://localhost:8080"), "ws://localhost:8080/v1/ws");
+  assert.equal(buildWsUrl("https://api.example.com/"), "wss://api.example.com/v1/ws");
+});
+
+test("buildWsProtocols carries token via subprotocol entry", () => {
+  assert.deepEqual(buildWsProtocols("abc.def"), ["chat", "bearer.abc.def"]);
+});
+
+test("mergeIncomingMessage deduplicates by server id and clientMsgID", () => {
+  const existing = [
+    { id: 1, senderID: 2, content: "old", status: "sent" },
+    { id: "tmp-1", clientMsgID: "tmp-1", senderID: 1, content: "mine", local: true, status: "sending" },
+  ];
+
+  // 服务端 id 已存在：不追加。
+  const dupById = mergeIncomingMessage(existing, { id: 1, senderID: 2, content: "old" });
+  assert.equal(dupById.appended, false);
+  assert.equal(dupById.messages.length, 2);
+
+  // clientMsgID 命中本地"发送中"的消息：原地升级，不追加。
+  const dupByClient = mergeIncomingMessage(existing, {
+    id: 9,
+    clientMsgID: "tmp-1",
+    senderID: 1,
+    content: "mine",
+    createdAt: "2026-01-01T00:00:00Z",
+  });
+  assert.equal(dupByClient.appended, false);
+  const upgraded = dupByClient.messages.find((m) => m.clientMsgID === "tmp-1");
+  assert.equal(upgraded.id, 9);
+  assert.equal(upgraded.status, "sent");
+  assert.equal(upgraded.local, false);
+
+  // 新消息：追加。
+  const fresh = mergeIncomingMessage(existing, { id: 10, senderID: 2, content: "new" });
+  assert.equal(fresh.appended, true);
+  assert.equal(fresh.messages.length, 3);
+});
+
+test("messageMatchesTarget compares pushed message against open conversation", () => {
+  const target = { type: "private", id: 42 };
+  assert.equal(messageMatchesTarget({ targetType: "private", targetID: 42 }, target), true);
+  assert.equal(messageMatchesTarget({ targetType: "group", targetID: 42 }, target), false);
+  assert.equal(messageMatchesTarget({ targetType: "private", targetID: 7 }, target), false);
+  assert.equal(messageMatchesTarget({ targetType: "private", targetID: 42 }, null), false);
+});
+
+test("latestServerMessageID ignores local temp ids", () => {
+  assert.equal(latestServerMessageID([]), 0);
   assert.equal(
-    buildWsUrl("http://localhost:8080", "abc 123"),
-    "ws://localhost:8080/v1/ws?token=abc%20123",
-  );
-  assert.equal(
-    buildWsUrl("https://api.example.com/", "token"),
-    "wss://api.example.com/v1/ws?token=token",
+    latestServerMessageID([
+      { id: 3 },
+      { id: "tmp-abc" },
+      { id: 11 },
+      { id: 7 },
+    ]),
+    11,
   );
 });
 

@@ -4,6 +4,7 @@ import (
 	"chat_proj/internal/cache"
 	"chat_proj/internal/dto"
 	"chat_proj/internal/model"
+	"chat_proj/internal/testutil"
 	"context"
 	"testing"
 )
@@ -122,7 +123,7 @@ func TestTransferGroupOwner(t *testing.T) {
 func TestGroupInfoCacheAndUpdateInvalidation(t *testing.T) {
 	db := setupTestDB(t)
 	initRepo(db)
-	InitCacheStore(cache.NewMemoryStore())
+	InitCacheStore(cache.NewRedisStore(testutil.Redis(t)))
 	defer InitCacheStore(nil)
 
 	owner := createTestUser(t, db, "group-cache-owner@test.com")

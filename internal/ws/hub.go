@@ -15,6 +15,7 @@ func NewHub() *Hub {
 	}
 }
 
+// SetPresenceStore 设置 Hub 使用的在线状态存储。
 func (h *Hub) SetPresenceStore(store PresenceStore) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -22,6 +23,7 @@ func (h *Hub) SetPresenceStore(store PresenceStore) {
 	h.presence = store
 }
 
+// PresenceStore 返回 Hub 当前使用的在线状态存储。
 func (h *Hub) PresenceStore() PresenceStore {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -29,6 +31,7 @@ func (h *Hub) PresenceStore() PresenceStore {
 	return h.presence
 }
 
+// Add 将客户端连接加入对应用户的连接集合。
 func (h *Hub) Add(client *Client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -39,6 +42,7 @@ func (h *Hub) Add(client *Client) {
 	h.clients[client.UserID][client] = struct{}{}
 }
 
+// Remove 从 Hub 中移除客户端，并清理空的用户连接集合。
 func (h *Hub) Remove(client *Client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -53,6 +57,7 @@ func (h *Hub) Remove(client *Client) {
 	}
 }
 
+// SendTo 向指定用户的全部本机连接发送消息，并报告是否存在连接。
 func (h *Hub) SendTo(userID uint, message any) bool {
 	h.mu.RLock()
 	userClients := h.clients[userID]
@@ -69,8 +74,26 @@ func (h *Hub) SendTo(userID uint, message any) bool {
 	return len(clients) > 0
 }
 
+// SendToMany 向多个用户的全部本机连接广播消息。
 func (h *Hub) SendToMany(userIDs []uint, message any) {
 	for _, userID := range userIDs {
 		h.SendTo(userID, message)
+	}
+}
+
+// CloseAll 关闭全部连接，用于优雅停机。websocket 连接在 Upgrade 后已脱离
+// net/http 的连接管理，server.Shutdown 不会等待它们，需要显式关闭。
+func (h *Hub) CloseAll() {
+	h.mu.RLock()
+	clients := make([]*Client, 0)
+	for _, userClients := range h.clients {
+		for client := range userClients {
+			clients = append(clients, client)
+		}
+	}
+	h.mu.RUnlock()
+
+	for _, client := range clients {
+		client.Close()
 	}
 }

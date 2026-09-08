@@ -28,18 +28,28 @@ type ServerConfig struct {
 	Port int    `mapstructure:"port"`
 }
 
+// Address 返回 HTTP 服务监听地址。
 func (s ServerConfig) Address() string {
 	return fmt.Sprintf("%s:%d", s.Host, s.Port)
 }
 
 type DatabaseConfig struct {
-	Host     string `mapstructure:"host"`
-	Port     int    `mapstructure:"port"`
-	User     string `mapstructure:"user"`
-	Password string `mapstructure:"password"`
-	DBName   string `mapstructure:"dbname"`
-	SSLMode  string `mapstructure:"sslmode"`
-	TimeZone string `mapstructure:"timezone"`
+	Host         string `mapstructure:"host"`
+	Port         int    `mapstructure:"port"`
+	User         string `mapstructure:"user"`
+	Password     string `mapstructure:"password"`
+	DBName       string `mapstructure:"dbname"`
+	SSLMode      string `mapstructure:"sslmode"`
+	TimeZone     string `mapstructure:"timezone"`
+	MaxOpenConns int    `mapstructure:"max_open_conns"`
+}
+
+// PoolMaxOpen 返回数据库连接池的最大打开连接数，并提供安全默认值。
+func (d DatabaseConfig) PoolMaxOpen() int {
+	if d.MaxOpenConns <= 0 {
+		return 30
+	}
+	return d.MaxOpenConns
 }
 
 type JWTConfig struct {
@@ -63,6 +73,7 @@ type RateLimitConfig struct {
 	WindowSeconds int  `mapstructure:"window_seconds"`
 }
 
+// Window 返回限流统计窗口，并在配置无效时使用默认值。
 func (r RateLimitConfig) Window() time.Duration {
 	if r.WindowSeconds <= 0 {
 		return time.Minute
@@ -70,6 +81,7 @@ func (r RateLimitConfig) Window() time.Duration {
 	return time.Duration(r.WindowSeconds) * time.Second
 }
 
+// Limit 返回单个限流窗口允许的请求数，并在配置无效时使用默认值。
 func (r RateLimitConfig) Limit() int {
 	if r.Requests <= 0 {
 		return 120
@@ -77,6 +89,7 @@ func (r RateLimitConfig) Limit() int {
 	return r.Requests
 }
 
+// Load 从配置文件和环境变量加载并校验应用配置。
 func Load() (*Config, error) {
 	v := viper.New()
 	v.SetConfigName("config")
@@ -96,9 +109,10 @@ func Load() (*Config, error) {
 	v.SetDefault("database.dbname", "chat_proj")
 	v.SetDefault("database.sslmode", "disable")
 	v.SetDefault("database.timezone", "Asia/Shanghai")
+	v.SetDefault("database.max_open_conns", 30)
 	v.SetDefault("jwt.secret", "change-me")
 	v.SetDefault("cors.allowed_origins", DefaultCORSAllowedOrigins())
-	v.SetDefault("redis.enabled", false)
+	v.SetDefault("redis.enabled", true)
 	v.SetDefault("redis.addr", "127.0.0.1:6379")
 	v.SetDefault("redis.password", "")
 	v.SetDefault("redis.db", 0)
@@ -122,6 +136,7 @@ func Load() (*Config, error) {
 	return &cfg, nil
 }
 
+// DefaultCORSAllowedOrigins 返回开发环境使用的默认跨域来源列表。
 func DefaultCORSAllowedOrigins() []string {
 	return []string{
 		"http://localhost:3000",

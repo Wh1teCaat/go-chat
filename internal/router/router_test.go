@@ -1524,11 +1524,10 @@ func dialWS(t *testing.T, serverURL, token string) *websocket.Conn {
 	}
 	u.Scheme = "ws"
 	u.Path = "/v1/ws"
-	q := u.Query()
-	q.Set("token", token)
-	u.RawQuery = q.Encode()
 
-	conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	// 和前端一致：token 通过 Sec-WebSocket-Protocol 的 "bearer.<token>" 条目传递。
+	dialer := websocket.Dialer{Subprotocols: []string{"chat", "bearer." + token}}
+	conn, _, err := dialer.Dial(u.String(), nil)
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}

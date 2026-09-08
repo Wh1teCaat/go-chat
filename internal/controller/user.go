@@ -1,16 +1,14 @@
 package controller
 
 import (
-	"chat_proj/internal/auth"
 	"chat_proj/internal/dto"
 	"chat_proj/internal/service"
-	"chat_proj/pkg/apperrors"
 	"chat_proj/pkg/response"
-	"errors"
 
 	"github.com/gin-gonic/gin"
 )
 
+// Register 校验注册信息并创建用户账号。
 func Register(c *gin.Context) {
 	var input dto.RegisterUserInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -24,6 +22,7 @@ func Register(c *gin.Context) {
 	response.Message(c, "registration successful")
 }
 
+// Login 校验用户凭据并签发访问令牌和刷新令牌。
 func Login(c *gin.Context) {
 	var input dto.LoginUserInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -36,20 +35,15 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	token, expireAt, err := auth.GenerateAccessToken(user.UserID, user.Email)
+	pair, err := service.TokenService.IssueTokenPair(c.Request.Context(), user.UserID, user.Email)
 	if err != nil {
-		response.Error(c, apperrors.WithCause(errors.New("internal error"), "failed to generate token", err))
+		response.Error(c, err)
 		return
 	}
-	refreshToken, refreshExpireAt, err := auth.GenerateRefreshToken(user.UserID, user.Email)
-	if err != nil {
-		response.Error(c, apperrors.WithCause(errors.New("internal error"), "failed to generate refresh token", err))
-		return
-	}
-
-	response.OK(c, tokenResponse(token, expireAt, refreshToken, refreshExpireAt))
+	response.OK(c, tokenResponse(pair))
 }
 
+// RefreshToken 使用有效的刷新令牌轮换并签发新的令牌对。
 func RefreshToken(c *gin.Context) {
 	var input dto.RefreshTokenInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -57,35 +51,41 @@ func RefreshToken(c *gin.Context) {
 		return
 	}
 
-	claims, err := auth.ValidateRefreshToken(input.RefreshToken)
+	// 校验、allowlist 检查和轮换都在 TokenService 内完成；旧 refresh token 从此不可再用。
+	pair, err := service.TokenService.RefreshTokenPair(c.Request.Context(), input.RefreshToken)
 	if err != nil {
-		response.Error(c, apperrors.WithCause(apperrors.ErrInvalidToken, "invalid refresh token", err))
+		response.Error(c, err)
 		return
 	}
-
-	token, expireAt, err := auth.GenerateAccessToken(claims.UserID, claims.Username)
-	if err != nil {
-		response.Error(c, apperrors.WithCause(errors.New("internal error"), "failed to generate token", err))
-		return
-	}
-	refreshToken, refreshExpireAt, err := auth.GenerateRefreshToken(claims.UserID, claims.Username)
-	if err != nil {
-		response.Error(c, apperrors.WithCause(errors.New("internal error"), "failed to generate refresh token", err))
-		return
-	}
-
-	response.OK(c, tokenResponse(token, expireAt, refreshToken, refreshExpireAt))
+	response.OK(c, tokenResponse(pair))
 }
 
-func tokenResponse(token string, expireAt int64, refreshToken string, refreshExpireAt int64) gin.H {
+// Logout 吊销 refresh token。access token 本身短期有效、无状态，不做黑名单，
+// 过期后没有可用的 refresh token 就等于完全登出。
+func Logout(c *gin.Context) {
+	var input dto.RefreshTokenInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		response.BindError(c, err)
+		return
+	}
+	if err := service.TokenService.RevokeRefreshToken(c.Request.Context(), input.RefreshToken); err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.Message(c, "logged out")
+}
+
+// tokenResponse 将服务层令牌对转换为统一的 HTTP 响应结构。
+func tokenResponse(pair *service.TokenPair) gin.H {
 	return gin.H{
-		"token":             token,
-		"expire_at":         expireAt,
-		"refresh_token":     refreshToken,
-		"refresh_expire_at": refreshExpireAt,
+		"token":             pair.AccessToken,
+		"expire_at":         pair.AccessExpireAt,
+		"refresh_token":     pair.RefreshToken,
+		"refresh_expire_at": pair.RefreshExpireAt,
 	}
 }
 
+// UpdateUserInfo 更新当前用户的可编辑资料。
 func UpdateUserInfo(c *gin.Context) {
 	var input dto.UpdateUserInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -99,6 +99,7 @@ func UpdateUserInfo(c *gin.Context) {
 	response.Message(c, "update successful")
 }
 
+// AddFriend 根据邮箱向其他用户发送好友申请。
 func AddFriend(c *gin.Context) {
 	var input dto.AddFriendInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -111,7 +112,7 @@ func AddFriend(c *gin.Context) {
 		return
 	}
 	if result != nil {
-		WSHub.SendTo(result.ReceiverID, wsEnvelope{
+		pushToUsers(c.Request.Context(), []uint{result.ReceiverID}, wsEnvelope{
 			Type: dto.WSMessageTypeFriendRequest,
 			Data: result.Request,
 		})
@@ -119,6 +120,7 @@ func AddFriend(c *gin.Context) {
 	response.Message(c, "friend request sent")
 }
 
+// AcceptFriend 接受指定好友申请。
 func AcceptFriend(c *gin.Context) {
 	var input dto.FriendRequestActionInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -132,6 +134,7 @@ func AcceptFriend(c *gin.Context) {
 	response.Message(c, "friend request accepted")
 }
 
+// RejectFriend 拒绝指定好友申请。
 func RejectFriend(c *gin.Context) {
 	var input dto.FriendRequestActionInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -145,6 +148,7 @@ func RejectFriend(c *gin.Context) {
 	response.Message(c, "friend request rejected")
 }
 
+// RemoveFriend 解除当前用户与指定用户的好友关系。
 func RemoveFriend(c *gin.Context) {
 	var input dto.FriendTargetInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -158,6 +162,7 @@ func RemoveFriend(c *gin.Context) {
 	response.Message(c, "friend removed")
 }
 
+// ListFriends 返回当前用户的好友列表及在线状态。
 func ListFriends(c *gin.Context) {
 	friends, err := service.UserService.ListFriends(c.Request.Context(), userID(c))
 	if err != nil {
@@ -167,6 +172,7 @@ func ListFriends(c *gin.Context) {
 	response.OK(c, friends)
 }
 
+// ListPendingFriendRequests 返回等待当前用户处理的好友申请。
 func ListPendingFriendRequests(c *gin.Context) {
 	requests, err := service.UserService.ListPendingFriendRequests(c.Request.Context(), userID(c))
 	if err != nil {
@@ -176,6 +182,7 @@ func ListPendingFriendRequests(c *gin.Context) {
 	response.OK(c, requests)
 }
 
+// userID 从 Gin 上下文中读取经过认证的用户 ID。
 func userID(c *gin.Context) uint {
 	return c.GetUint("user_id")
 }

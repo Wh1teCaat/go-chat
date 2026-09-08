@@ -52,6 +52,7 @@ func (r *Repository) GetUserByEmail(ctx context.Context, email string) (*model.U
 	return &user, nil
 }
 
+// GetUserIDByEmail 根据邮箱查询用户 ID。
 func (r *Repository) GetUserIDByEmail(ctx context.Context, email string) (uint, error) {
 	var user model.User
 	if err := r.db.WithContext(ctx).

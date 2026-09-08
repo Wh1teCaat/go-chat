@@ -44,7 +44,9 @@ type ListMessagesInput struct {
 	TargetID   uint              `json:"targetID" binding:"required"`
 	// BeforeMessageID 是向上翻历史的游标；为空时读取最新一页。
 	BeforeMessageID uint `json:"beforeMessageID"`
-	Limit           int  `json:"limit"`
+	// AfterMessageID 是断线重连后的增量补拉游标，按 id 升序返回更新的消息；与 BeforeMessageID 互斥。
+	AfterMessageID uint `json:"afterMessageID"`
+	Limit          int  `json:"limit"`
 }
 
 type MarkMessageReadInput struct {
@@ -75,4 +77,10 @@ type MessageOutput struct {
 	SenderID  uint   `json:"senderID"`
 	Content   string `json:"content"`
 	CreatedAt string `json:"createdAt"`
+	// TargetType/TargetID 只在 WS 推送时填充，标明消息属于接收端视角的哪个会话，
+	// 客户端据此把消息归档到正确的会话而不是一律插入当前窗口。
+	TargetType MessageTargetType `json:"targetType,omitempty"`
+	TargetID   uint              `json:"targetID,omitempty"`
+	// ClientMsgID 只在推送给发送方自己的连接时填充，发送端据此和本地"发送中"的消息去重。
+	ClientMsgID string `json:"clientMsgID,omitempty"`
 }

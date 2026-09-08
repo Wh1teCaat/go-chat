@@ -45,6 +45,7 @@ func NewClient(userID uint, conn *websocket.Conn, hub *Hub, handle IncomingHandl
 	}
 }
 
+// Start 注册客户端并启动独立的读写循环，直到连接结束。
 func (c *Client) Start(ctx context.Context) {
 	c.hub.Add(c)
 	c.markPresenceConnected(ctx)
@@ -53,6 +54,7 @@ func (c *Client) Start(ctx context.Context) {
 	c.readLoop(ctx)
 }
 
+// Send 将消息放入客户端发送队列，队列阻塞时关闭连接以保护服务。
 func (c *Client) Send(message any) {
 	c.mu.Lock()
 	if c.closed {
@@ -70,6 +72,7 @@ func (c *Client) Send(message any) {
 	}
 }
 
+// readLoop 持续读取客户端消息、刷新读期限并交给业务处理器。
 func (c *Client) readLoop(ctx context.Context) {
 	defer c.Close()
 
@@ -89,6 +92,7 @@ func (c *Client) readLoop(ctx context.Context) {
 	}
 }
 
+// writeLoop 持续发送队列消息和心跳，直到连接关闭。
 func (c *Client) writeLoop() {
 	defer c.Close()
 
@@ -113,6 +117,7 @@ func (c *Client) writeLoop() {
 	}
 }
 
+// writeJSON 在写入期限内向 WebSocket 连接发送 JSON 消息。
 func (c *Client) writeJSON(message any) error {
 	// 写超时作用于本次 WriteJSON，避免网络写阻塞导致 writeLoop 永久挂住。
 	if err := c.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
@@ -121,6 +126,7 @@ func (c *Client) writeJSON(message any) error {
 	return c.conn.WriteJSON(message)
 }
 
+// writePing 在写入期限内向客户端发送 WebSocket 心跳帧。
 func (c *Client) writePing() error {
 	if err := c.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
 		return err
@@ -128,6 +134,7 @@ func (c *Client) writePing() error {
 	return c.conn.WriteMessage(websocket.PingMessage, nil)
 }
 
+// Close 以幂等方式关闭客户端发送队列和网络连接。
 func (c *Client) Close() {
 	c.once.Do(func() {
 		c.mu.Lock()
@@ -141,6 +148,7 @@ func (c *Client) Close() {
 	})
 }
 
+// markPresenceConnected 在状态存储中登记当前连接上线。
 func (c *Client) markPresenceConnected(ctx context.Context) {
 	store := c.hub.PresenceStore()
 	if store == nil {
@@ -149,6 +157,7 @@ func (c *Client) markPresenceConnected(ctx context.Context) {
 	_ = store.Connect(ctx, c.UserID, c.connectionID)
 }
 
+// markPresenceDisconnected 在独立超时上下文中登记当前连接下线。
 func (c *Client) markPresenceDisconnected() {
 	store := c.hub.PresenceStore()
 	if store == nil {
@@ -159,6 +168,7 @@ func (c *Client) markPresenceDisconnected() {
 	_ = store.Disconnect(ctx, c.UserID, c.connectionID)
 }
 
+// refreshPresence 在独立超时上下文中续期当前连接的在线状态。
 func (c *Client) refreshPresence() {
 	store := c.hub.PresenceStore()
 	if store == nil {

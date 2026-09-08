@@ -149,6 +149,7 @@ func (s *fileService) InitMultipartUpload(ctx context.Context, input InitMultipa
 	}, nil
 }
 
+// UploadMultipartChunk 校验上传会话和分片参数，将分片落盘并记录上传进度。
 func (s *fileService) UploadMultipartChunk(ctx context.Context, input UploadMultipartChunkInput) error {
 	if input.Reader == nil {
 		return apperrors.WithMessage(apperrors.ErrInvalidInput, "chunk is required")
@@ -179,6 +180,7 @@ func (s *fileService) UploadMultipartChunk(ctx context.Context, input UploadMult
 	})
 }
 
+// GetMultipartUploadStatus 返回用户分片上传会话的状态和已上传分片序号。
 func (s *fileService) GetMultipartUploadStatus(ctx context.Context, userID uint, uploadID string) (*dto.MultipartUploadOutput, error) {
 	session, err := s.getUploadSession(ctx, userID, uploadID)
 	if err != nil {
@@ -197,6 +199,7 @@ func (s *fileService) GetMultipartUploadStatus(ctx context.Context, userID uint,
 	}, nil
 }
 
+// CompleteMultipartUpload 校验所有分片、合并文件并持久化最终文件元数据。
 func (s *fileService) CompleteMultipartUpload(ctx context.Context, userID uint, uploadID string) (*dto.UploadFileOutput, error) {
 	session, err := s.getWritableUploadSession(ctx, userID, uploadID)
 	if err != nil {
@@ -262,6 +265,7 @@ func (s *fileService) CompleteMultipartUpload(ctx context.Context, userID uint, 
 	}, nil
 }
 
+// CancelMultipartUpload 将用户的未完成上传标记为取消并删除临时分片。
 func (s *fileService) CancelMultipartUpload(ctx context.Context, userID uint, uploadID string) error {
 	session, err := s.getUploadSession(ctx, userID, uploadID)
 	if err != nil {
@@ -439,6 +443,7 @@ func (s *fileService) GetDownloadFileRange(ctx context.Context, requesterID, fil
 	return s.getDownloadFile(ctx, requesterID, fileID, &byteRange)
 }
 
+// getDownloadFile 校验下载权限并打开完整文件或指定字节范围。
 func (s *fileService) getDownloadFile(ctx context.Context, requesterID, fileID uint, byteRange *DownloadByteRange) (*DownloadFileResult, error) {
 	if fileID == 0 {
 		return nil, apperrors.WithMessage(apperrors.ErrInvalidInput, "file id is required")
@@ -482,6 +487,7 @@ func (s *fileService) getDownloadFile(ctx context.Context, requesterID, fileID u
 	}, nil
 }
 
+// ensureDownloadAllowed 校验请求者是否有权下载指定文件。
 func (s *fileService) ensureDownloadAllowed(ctx context.Context, requesterID uint, file *model.File) error {
 	if file.UserID == requesterID {
 		return nil
@@ -500,6 +506,7 @@ func (s *fileService) ensureDownloadAllowed(ctx context.Context, requesterID uin
 	return nil
 }
 
+// ensureStoredSHA256 比对客户端声明与服务端计算的摘要，失败时删除已存对象。
 func (s *fileService) ensureStoredSHA256(ctx context.Context, stored *storage.StoredObject, expected string) error {
 	if expected == "" {
 		return nil
@@ -512,6 +519,7 @@ func (s *fileService) ensureStoredSHA256(ctx context.Context, stored *storage.St
 	return nil
 }
 
+// ensureConversationMember 确认请求者是指定会话的成员。
 func (s *fileService) ensureConversationMember(ctx context.Context, conversationID, requesterID uint) error {
 	inConversation, err := repo.IsUserInConversation(ctx, conversationID, requesterID)
 	if err != nil {
@@ -523,6 +531,7 @@ func (s *fileService) ensureConversationMember(ctx context.Context, conversation
 	return nil
 }
 
+// isAllowedByLegacyFileMessage 通过历史文件消息判断请求者是否拥有兼容性下载权限。
 func (s *fileService) isAllowedByLegacyFileMessage(ctx context.Context, requesterID, fileID uint) (bool, error) {
 	messages, err := repo.ListPotentialFileMessagesByFileID(ctx, fileID)
 	if err != nil {
@@ -544,6 +553,7 @@ func (s *fileService) isAllowedByLegacyFileMessage(ctx context.Context, requeste
 	return false, nil
 }
 
+// getWritableUploadSession 获取属于用户且仍可写入的未过期上传会话。
 func (s *fileService) getWritableUploadSession(ctx context.Context, userID uint, uploadID string) (*model.UploadSession, error) {
 	if s.store == nil {
 		return nil, apperrors.WithMessage(apperrors.ErrInvalidInput, "file storage is not initialized")
@@ -561,6 +571,7 @@ func (s *fileService) getWritableUploadSession(ctx context.Context, userID uint,
 	return session, nil
 }
 
+// getUploadSession 获取上传会话并校验其归属用户。
 func (s *fileService) getUploadSession(ctx context.Context, userID uint, uploadID string) (*model.UploadSession, error) {
 	uploadID = strings.TrimSpace(uploadID)
 	if uploadID == "" {
@@ -579,6 +590,7 @@ func (s *fileService) getUploadSession(ctx context.Context, userID uint, uploadI
 	return session, nil
 }
 
+// expectedChunkSize 计算指定分片在当前上传会话中应有的字节数。
 func expectedChunkSize(session *model.UploadSession, index int) int64 {
 	offset := int64(index) * session.ChunkSize
 	remaining := session.Size - offset
@@ -588,6 +600,7 @@ func expectedChunkSize(session *model.UploadSession, index int) int64 {
 	return session.ChunkSize
 }
 
+// ensureAllChunksPresent 校验所有分片是否完整存在且大小符合预期。
 func ensureAllChunksPresent(session *model.UploadSession, chunks []model.UploadChunk) error {
 	if len(chunks) != session.TotalChunks {
 		return apperrors.WithMessage(apperrors.ErrConflict, "upload chunks are incomplete")
@@ -605,6 +618,7 @@ func ensureAllChunksPresent(session *model.UploadSession, chunks []model.UploadC
 	return nil
 }
 
+// chunkIndexes 提取并排序已上传分片的序号。
 func chunkIndexes(chunks []model.UploadChunk) []int {
 	indexes := make([]int, 0, len(chunks))
 	for _, chunk := range chunks {
@@ -614,6 +628,7 @@ func chunkIndexes(chunks []model.UploadChunk) []int {
 	return indexes
 }
 
+// normalizeMultipartContentType 清理分片上传声明的 MIME 类型并提供默认值。
 func normalizeMultipartContentType(contentType string) string {
 	contentType = strings.TrimSpace(contentType)
 	if contentType == "" {
@@ -622,6 +637,7 @@ func normalizeMultipartContentType(contentType string) string {
 	return contentType
 }
 
+// normalizeClientSHA256 规范化并校验客户端提供的 SHA-256 十六进制摘要。
 func normalizeClientSHA256(value string) (string, error) {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if value == "" {
@@ -639,6 +655,7 @@ func normalizeClientSHA256(value string) (string, error) {
 	return value, nil
 }
 
+// randomUploadID 生成不可预测的分片上传会话标识。
 func randomUploadID() (string, error) {
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {

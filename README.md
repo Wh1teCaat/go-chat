@@ -5,9 +5,11 @@
 ## 架构
 
 - 后端：Gin + GORM + PostgreSQL，REST 接口处理账号、好友、群组、消息列表和文件上传下载。
-- 认证：JWT access token + refresh token；前端会在 access token 过期前主动刷新，接口遇到 401 时也会自动刷新后重试。
-- 实时消息：Gorilla WebSocket，客户端发消息后服务端落库并返回 `message_ack`，前端据此展示发送中/已发送/发送失败/已读状态，再由服务端推送给接收方。
-- 缓存：Redis 可选开启；当前用于限流计数、用户资料缓存、群资料缓存和在线状态，Redis 不可用时限流和在线状态会退回内存实现。
+- 认证：JWT access token + refresh token。refresh token 带 jti，服务端用 Redis allowlist 管理（Redis 为必需依赖）；每次刷新轮换并吊销旧 token，重放返回 401；`/v1/user/logout` 吊销 refresh token。WebSocket 通过 `Sec-WebSocket-Protocol` 的 `bearer.<token>` 条目认证，token 不进 URL。前端会在 access token 过期前主动刷新，接口遇到 401 时也会自动刷新后重试。
+- 实时消息：Gorilla WebSocket。客户端发消息后服务端落库并返回 `message_ack`，前端据此展示发送中/已发送/发送失败/已读状态。`clientMsgID` 参与服务端幂等去重（`(sender_id, client_msg_id)` 唯一索引），ACK 丢失重发不会重复落库。消息本体推送给接收方和发送者的全部连接（多标签页/多设备同步），推送带接收端视角的 `targetType`/`targetID`。前端断线后指数退避自动重连，重连成功用 `afterMessageID` 增量补拉断线期间的消息。
+- 多实例：推送经 `internal/wsbus` 总线路由——启用 Redis 时走 Pub/Sub 全局频道广播，每个实例只投递本地在线用户，支持多实例水平扩展；无 Redis 时退化为进程内直投。ACK/错误只对发起连接有意义，始终本地直投。设计取舍见 [docs/design/01-multi-instance-ws.md](docs/design/01-multi-instance-ws.md)。
+- 缓存：Redis 为必需依赖；资料通过显式字段映射存 Hash，refresh token 用户 ID 存 String，通过 Lua 原子轮换。启动连接失败会退出；运行时资料缓存失败回源数据库，Token 操作失败返回错误。
+- 运维：`GET /health` 健康检查（数据库不可用返回 503）；收到 SIGINT/SIGTERM 后优雅停机（停止监听、等待存量请求、关闭全部 WebSocket 连接）。
 - 文件：默认使用本地存储 `uploads/`；头像可通过 `/uploads/...` 公开访问，聊天附件必须走 `/v1/file/:id/download` 鉴权下载，普通附件支持图片、PDF、Word、TXT 和 ZIP。
 - 前端：`web/` 是静态测试页，默认请求 `http://localhost:8080`，页面端口固定为 `5173`。
 
@@ -24,6 +26,7 @@ flowchart LR
     Storage --> Local[("本地 uploads/")]
     Gin --> Goose["goose migrations"]
     Goose --> PG
+    WSHub <-->|"wsbus Pub/Sub 广播（多实例路由）"| Redis
 ```
 
 ## 目录结构
@@ -43,6 +46,7 @@ internal/router/      路由注册
 internal/service/     业务逻辑
 internal/storage/     文件存储抽象和本地磁盘实现；后续可扩展 MinIO/OSS
 internal/ws/          WebSocket Hub 和连接生命周期
+internal/wsbus/       跨实例推送总线：进程内直投 / Redis Pub/Sub 广播
 migrations/           goose SQL migrations，服务启动时自动执行
 pkg/                  通用错误、日志和响应封装
 web/                  静态测试前端
@@ -63,7 +67,7 @@ docker compose up --build
 - PostgreSQL：`localhost:5432`
 - Redis：`localhost:6379`
 
-Compose 会启动 PostgreSQL、Redis、后端和前端。后端容器会把 `configs/config.docker.toml` 挂载成容器内的 `configs/config.toml`，所以数据库地址使用 `postgres`，Redis 地址使用 `redis:6379`。
+Compose 会启动 PostgreSQL、Redis、两个单体后端、nginx 入口和前端。nginx 在两个后端之间按活跃连接数负载均衡 REST 和 WebSocket；后端通过 Redis Pub/Sub 转发跨实例推送。后端容器会把 `configs/config.docker.toml` 挂载成容器内的 `configs/config.toml`，所以数据库地址使用 `postgres`，Redis 地址使用 `redis:6379`。
 
 停止服务：
 
@@ -105,7 +109,7 @@ npm run dev
 本地常改字段：
 
 - `[database] password`：本机 PostgreSQL 密码
-- `[redis] enabled`：没有 Redis 时可改成 `false`
+- `[redis] enabled`：必须为 `true`，启动前需要可连接的 Redis
 - `[log] path`：日志文件路径
 - `[jwt] secret`：部署时必须换成强随机字符串
 
@@ -233,5 +237,7 @@ node --test web/app-helpers.test.mjs
 Redis 集成测试需要本机有 Redis，并显式打开：
 
 ```bash
-CHAT_REDIS_INTEGRATION=1 GOCACHE=/tmp/go-build GOMODCACHE=/tmp/go-mod go test ./internal/cache ./internal/service -run 'Redis|Cache' -count=1
+CHAT_REDIS_INTEGRATION=1 GOCACHE=/tmp/go-build GOMODCACHE=/tmp/go-mod go test ./internal/cache ./internal/service ./internal/wsbus -run 'Redis|Cache' -count=1
 ```
+
+缓存迁移：资料与刷新令牌键使用 `v2:` 前缀，旧 JSON 缓存自然过期；升级后旧刷新令牌失效，需要重新登录。缓存测试使用 miniredis 协议服务执行 RedisStore 与 Lua，不提供生产内存缓存实现。

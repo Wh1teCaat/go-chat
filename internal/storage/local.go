@@ -151,10 +151,12 @@ type rangeReadCloser struct {
 	closer io.Closer
 }
 
+// Read 从受限区间读取数据，且不会越过范围末尾。
 func (r *rangeReadCloser) Read(p []byte) (int, error) {
 	return r.reader.Read(p)
 }
 
+// Close 关闭区间读取器持有的底层文件。
 func (r *rangeReadCloser) Close() error {
 	return r.closer.Close()
 }
@@ -305,6 +307,7 @@ func (s *LocalStorage) objectPath(key string) (string, error) {
 	return filepath.Join(s.rootDir, filepath.FromSlash(strings.TrimPrefix(cleanKey, "/"))), nil
 }
 
+// multipartDir 校验上传标识并返回其临时分片目录。
 func (s *LocalStorage) multipartDir(uploadID string) (string, error) {
 	cleanID := strings.Trim(path.Clean("/"+uploadID), "/")
 	if cleanID == "" || strings.Contains(cleanID, "..") || strings.Contains(cleanID, "/") {
@@ -313,10 +316,12 @@ func (s *LocalStorage) multipartDir(uploadID string) (string, error) {
 	return filepath.Join(s.rootDir, ".parts", cleanID), nil
 }
 
+// partFilename 返回指定分片序号对应的规范文件名。
 func partFilename(index int) string {
 	return fmt.Sprintf("%06d.part", index)
 }
 
+// copyParts 按序合并所有分片，并返回总字节数和 SHA-256 摘要。
 func copyParts(dst io.Writer, partDir string, totalChunks int) (int64, string, error) {
 	var written int64
 	hasher := sha256.New()

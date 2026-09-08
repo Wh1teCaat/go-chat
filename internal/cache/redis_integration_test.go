@@ -30,34 +30,24 @@ func TestRedisStoreRealConnection(t *testing.T) {
 
 	store := NewRedisStore(client)
 	key := "chat_proj:test:redis_store"
-	value := struct {
-		Name string `json:"name"`
-		N    int    `json:"n"`
-	}{
-		Name: "ok",
-		N:    1,
-	}
+	value := map[string]string{"name": "ok", "n": "1"}
 
-	if err := store.SetJSON(context.Background(), key, value, 30*time.Second); err != nil {
+	if err := store.SetHash(context.Background(), key, value, 30*time.Second); err != nil {
 		t.Fatalf("SetJSON returned error: %v", err)
 	}
 
-	var got struct {
-		Name string `json:"name"`
-		N    int    `json:"n"`
-	}
-	ok, err := store.GetJSON(context.Background(), key, &got)
+	got, ok, err := store.GetHash(context.Background(), key)
 	if err != nil {
 		t.Fatalf("GetJSON returned error: %v", err)
 	}
-	if !ok || got.Name != value.Name || got.N != value.N {
+	if !ok || got["name"] != value["name"] || got["n"] != value["n"] {
 		t.Fatalf("unexpected cached value: ok=%v got=%+v", ok, got)
 	}
 
 	if err := store.Delete(context.Background(), key); err != nil {
 		t.Fatalf("Delete returned error: %v", err)
 	}
-	ok, err = store.GetJSON(context.Background(), key, &got)
+	_, ok, err = store.GetHash(context.Background(), key)
 	if err != nil {
 		t.Fatalf("GetJSON after delete returned error: %v", err)
 	}

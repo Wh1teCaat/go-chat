@@ -133,6 +133,7 @@ func (g *groupService) ListMyJoinedGroups(ctx context.Context, userID uint) ([]d
 
 // -- 群成员相关方法 ------------------------------------------------------------
 
+// addMemberToGroupAndConversation 在同一事务中加入群成员及对应会话成员。
 func (g *groupService) addMemberToGroupAndConversation(ctx context.Context, txRepo *repository.Repository, groupID, userID uint) error {
 	conversation, err := txRepo.GetConversationByGroupID(ctx, groupID)
 	if err != nil {
@@ -156,6 +157,7 @@ func (g *groupService) addMemberToGroupAndConversation(ctx context.Context, txRe
 	return nil
 }
 
+// RequestJoinGroup 校验成员状态并为用户创建待审核的入群申请。
 func (g *groupService) RequestJoinGroup(ctx context.Context, groupID, userID uint) (*dto.GroupJoinRequestOutput, error) {
 	var output *dto.GroupJoinRequestOutput
 	err := repo.WithTransaction(func(txRepo *repository.Repository) error {
@@ -189,6 +191,7 @@ func (g *groupService) RequestJoinGroup(ctx context.Context, groupID, userID uin
 	return output, nil
 }
 
+// ReviewGroupJoinRequest 校验审核权限并接受或拒绝入群申请。
 func (g *groupService) ReviewGroupJoinRequest(ctx context.Context, requestID uint, input dto.GroupJoinRequestReviewInput) error {
 	if input.Status != model.GroupJoinRequestStatusApproved && input.Status != model.GroupJoinRequestStatusRejected {
 		return apperrors.WithMessage(apperrors.ErrInvalidInput, "invalid review status")
@@ -229,6 +232,7 @@ func (g *groupService) ReviewGroupJoinRequest(ctx context.Context, requestID uin
 	})
 }
 
+// ListGroupJoinRequests 在校验审核权限后返回指定群组的入群申请。
 func (g *groupService) ListGroupJoinRequests(ctx context.Context, groupID, operatorID uint) ([]dto.GroupJoinRequestOutput, error) {
 	role, err := repo.GetGroupMemberRole(ctx, groupID, operatorID)
 	if err != nil {
@@ -244,6 +248,7 @@ func (g *groupService) ListGroupJoinRequests(ctx context.Context, groupID, opera
 	return toGroupJoinRequestOutputs(requests), nil
 }
 
+// ListMyGroupJoinRequests 返回指定用户提交的全部入群申请。
 func (g *groupService) ListMyGroupJoinRequests(ctx context.Context, userID uint) ([]dto.GroupJoinRequestOutput, error) {
 	requests, err := repo.ListGroupJoinRequestsByUserID(ctx, userID)
 	if err != nil {
@@ -252,6 +257,7 @@ func (g *groupService) ListMyGroupJoinRequests(ctx context.Context, userID uint)
 	return toGroupJoinRequestOutputs(requests), nil
 }
 
+// ListReviewableGroupJoinRequests 汇总用户有权审核的群组入群申请。
 func (g *groupService) ListReviewableGroupJoinRequests(ctx context.Context, userID uint) ([]dto.GroupJoinRequestOutput, error) {
 	memberships, err := repo.ListGroupMembersByUserIDWithMinRole(ctx, userID, model.GroupMemberRoleAdmin)
 	if err != nil {
@@ -273,6 +279,7 @@ func (g *groupService) ListReviewableGroupJoinRequests(ctx context.Context, user
 	return result, nil
 }
 
+// ListGroupApproverIDs 返回指定群组中具备入群审核权限的用户 ID。
 func (g *groupService) ListGroupApproverIDs(ctx context.Context, groupID uint) ([]uint, error) {
 	members, err := repo.ListGroupMembersByGroupIDWithFilter(ctx, groupID, model.GroupMemberRoleAdmin)
 	if err != nil {
@@ -285,6 +292,7 @@ func (g *groupService) ListGroupApproverIDs(ctx context.Context, groupID uint) (
 	return ids, nil
 }
 
+// InviteToGroup 校验操作权限并将目标用户加入群组及群会话。
 func (g *groupService) InviteToGroup(ctx context.Context, groupID, userID, operatorID uint) error {
 	if _, err := getGroupInfo(ctx, groupID); err != nil {
 		return apperrors.WithMessage(apperrors.ErrNotFound, "group not found")
@@ -308,6 +316,7 @@ func (g *groupService) InviteToGroup(ctx context.Context, groupID, userID, opera
 	})
 }
 
+// removeMemberFromGroupAndConversation 在同一事务中移除群成员及对应会话成员。
 func (g *groupService) removeMemberFromGroupAndConversation(ctx context.Context, groupID, userID uint) error {
 	return repo.WithTransaction(func(txRepo *repository.Repository) error {
 		conversation, err := txRepo.GetConversationByGroupID(ctx, groupID)
@@ -326,6 +335,7 @@ func (g *groupService) removeMemberFromGroupAndConversation(ctx context.Context,
 	})
 }
 
+// LeaveGroup 校验群主限制后让用户退出群组及群会话。
 func (g *groupService) LeaveGroup(ctx context.Context, groupID, userID uint) error {
 	inGroup, err := repo.IsUserInGroup(ctx, groupID, userID)
 	if err != nil {
@@ -345,6 +355,7 @@ func (g *groupService) LeaveGroup(ctx context.Context, groupID, userID uint) err
 	return g.removeMemberFromGroupAndConversation(ctx, groupID, userID)
 }
 
+// RemoveGroupMember 校验角色权限后将目标成员移出群组及群会话。
 func (g *groupService) RemoveGroupMember(ctx context.Context, groupID, userID, operatorID uint) error {
 	userInGroup, err1 := repo.IsUserInGroup(ctx, groupID, userID)
 	if err1 != nil {
@@ -373,6 +384,7 @@ func (g *groupService) RemoveGroupMember(ctx context.Context, groupID, userID, o
 	return g.removeMemberFromGroupAndConversation(ctx, groupID, userID)
 }
 
+// UpdateGroupMemberRole 校验操作人与目标成员角色后更新成员权限。
 func (g *groupService) UpdateGroupMemberRole(ctx context.Context, groupID, userID, operatorID uint, input dto.UpdateGroupMemberRoleInput) error {
 	operatorRole, err := repo.GetGroupMemberRole(ctx, groupID, operatorID)
 	if err != nil {
@@ -406,6 +418,7 @@ func (g *groupService) UpdateGroupMemberRole(ctx context.Context, groupID, userI
 	return nil
 }
 
+// ListGroupMembers 在确认用户属于群组后返回成员资料。
 func (g *groupService) ListGroupMembers(ctx context.Context, groupID, userID uint) ([]dto.GroupMemberOutput, error) {
 	inGroup, err := repo.IsUserInGroup(ctx, groupID, userID)
 	if err != nil {
@@ -421,6 +434,7 @@ func (g *groupService) ListGroupMembers(ctx context.Context, groupID, userID uin
 	return toGroupMemberOutputs(members), nil
 }
 
+// toGroupOutput 将群组模型转换为对外输出结构。
 func toGroupOutput(group model.Group) dto.GroupOutput {
 	return dto.GroupOutput{
 		ID:        group.ID,
@@ -431,6 +445,7 @@ func toGroupOutput(group model.Group) dto.GroupOutput {
 	}
 }
 
+// toGroupOutputs 批量将群组模型转换为对外输出结构。
 func toGroupOutputs(groups []model.Group) []dto.GroupOutput {
 	result := make([]dto.GroupOutput, 0, len(groups))
 	for _, group := range groups {
@@ -439,6 +454,7 @@ func toGroupOutputs(groups []model.Group) []dto.GroupOutput {
 	return result
 }
 
+// toGroupMemberOutput 将群成员模型转换为对外输出结构。
 func toGroupMemberOutput(member model.GroupMember) dto.GroupMemberOutput {
 	return dto.GroupMemberOutput{
 		UserID:   member.UserID,
@@ -447,6 +463,7 @@ func toGroupMemberOutput(member model.GroupMember) dto.GroupMemberOutput {
 	}
 }
 
+// toGroupMemberOutputs 批量将群成员模型转换为对外输出结构。
 func toGroupMemberOutputs(members []model.GroupMember) []dto.GroupMemberOutput {
 	result := make([]dto.GroupMemberOutput, 0, len(members))
 	for _, member := range members {
@@ -455,6 +472,7 @@ func toGroupMemberOutputs(members []model.GroupMember) []dto.GroupMemberOutput {
 	return result
 }
 
+// toGroupJoinRequestOutput 将入群申请模型转换为对外输出结构。
 func toGroupJoinRequestOutput(request model.GroupJoinRequest) dto.GroupJoinRequestOutput {
 	return dto.GroupJoinRequestOutput{
 		ID:         request.ID,
@@ -468,6 +486,7 @@ func toGroupJoinRequestOutput(request model.GroupJoinRequest) dto.GroupJoinReque
 	}
 }
 
+// toGroupJoinRequestOutputs 批量将入群申请模型转换为对外输出结构。
 func toGroupJoinRequestOutputs(requests []model.GroupJoinRequest) []dto.GroupJoinRequestOutput {
 	result := make([]dto.GroupJoinRequestOutput, 0, len(requests))
 	for _, request := range requests {

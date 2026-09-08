@@ -11,6 +11,7 @@ import (
 type GroupRepository interface {
 	CreateGroup(ctx context.Context, group *model.Group) error
 	GetGroupByID(ctx context.Context, id uint) (*model.Group, error)
+	GetGroupsByIDs(ctx context.Context, ids []uint) ([]model.Group, error)
 	UpdateGroup(ctx context.Context, id uint, updates map[string]interface{}) error
 	ListGroupsByOwnerID(ctx context.Context, ownerID uint) ([]model.Group, error)
 	ListJoinedGroupsByUserID(ctx context.Context, userID uint) ([]model.Group, error)
@@ -44,6 +45,18 @@ func (r *Repository) GetGroupByID(ctx context.Context, id uint) (*model.Group, e
 		return nil, err
 	}
 	return &group, nil
+}
+
+// GetGroupsByIDs 批量查询群信息，会话列表用它避免逐群查询。
+func (r *Repository) GetGroupsByIDs(ctx context.Context, ids []uint) ([]model.Group, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var groups []model.Group
+	if err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&groups).Error; err != nil {
+		return nil, err
+	}
+	return groups, nil
 }
 
 // UpdateGroup 只更新允许修改的群字段。
@@ -80,6 +93,7 @@ func (r *Repository) ListJoinedGroupsByUserID(ctx context.Context, userID uint) 
 	return groups, nil
 }
 
+// ListGroupsByOwnerID 查询指定用户创建并拥有的群组。
 func (r *Repository) ListGroupsByOwnerID(ctx context.Context, ownerID uint) ([]model.Group, error) {
 	var groups []model.Group
 	if err := r.db.WithContext(ctx).Where("owner_id = ?", ownerID).Find(&groups).Error; err != nil {
@@ -107,6 +121,7 @@ func (r *Repository) ListGroupMembersByGroupID(ctx context.Context, groupID uint
 	return members, nil
 }
 
+// ListGroupMembersByGroupIDWithFilter 按角色条件查询指定群组成员。
 func (r *Repository) ListGroupMembersByGroupIDWithFilter(ctx context.Context, groupID uint, filter uint8) ([]model.GroupMember, error) {
 	var members []model.GroupMember
 	if err := r.db.WithContext(ctx).
@@ -117,6 +132,7 @@ func (r *Repository) ListGroupMembersByGroupIDWithFilter(ctx context.Context, gr
 	return members, nil
 }
 
+// ListGroupMembersByUserIDWithMinRole 查询用户在其中至少具有指定角色的群成员记录。
 func (r *Repository) ListGroupMembersByUserIDWithMinRole(ctx context.Context, userID uint, minRole uint8) ([]model.GroupMember, error) {
 	var members []model.GroupMember
 	if err := r.db.WithContext(ctx).
@@ -150,6 +166,7 @@ func (r *Repository) GetGroupMemberRole(ctx context.Context, groupID, userID uin
 	return member.Role, nil
 }
 
+// UpdateGroupMemberRole 更新指定群成员角色并报告记录是否存在。
 func (r *Repository) UpdateGroupMemberRole(ctx context.Context, groupID, userID uint, newRole uint8) (bool, error) {
 	result := r.db.WithContext(ctx).
 		Model(&model.GroupMember{}).

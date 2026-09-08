@@ -10,9 +10,13 @@ import (
 type MessageRepository interface {
 	CreateMessage(ctx context.Context, message *model.Message) error
 	GetMessageByID(ctx context.Context, id uint) (*model.Message, error)
+	GetMessageBySenderAndClientMsgID(ctx context.Context, senderID uint, clientMsgID string) (*model.Message, error)
 	ListMessagesByConversationID(ctx context.Context, conversationID, beforeMessageID uint, limit int) ([]model.Message, error)
+	ListMessagesAfterMessageID(ctx context.Context, conversationID, afterMessageID uint, limit int) ([]model.Message, error)
 	GetLastMessageByConversationID(ctx context.Context, conversationID uint) (*model.Message, error)
+	GetLastMessagesByConversationIDs(ctx context.Context, conversationIDs []uint) ([]model.Message, error)
 	CountUnreadMessages(ctx context.Context, conversationID, userID, lastReadMessageID uint) (int64, error)
+	CountUnreadMessagesByConversationIDs(ctx context.Context, userID uint, conversationIDs []uint) (map[uint]int64, error)
 	ListPotentialFileMessagesByFileID(ctx context.Context, fileID uint) ([]model.Message, error)
 }
 
@@ -25,6 +29,17 @@ func (r *Repository) CreateMessage(ctx context.Context, message *model.Message) 
 func (r *Repository) GetMessageByID(ctx context.Context, id uint) (*model.Message, error) {
 	var message model.Message
 	if err := r.db.WithContext(ctx).First(&message, id).Error; err != nil {
+		return nil, err
+	}
+	return &message, nil
+}
+
+// GetMessageBySenderAndClientMsgID 按 (sender, clientMsgID) 查已落库的消息，用于发送幂等去重。
+func (r *Repository) GetMessageBySenderAndClientMsgID(ctx context.Context, senderID uint, clientMsgID string) (*model.Message, error) {
+	var message model.Message
+	if err := r.db.WithContext(ctx).
+		Where("sender_id = ? AND client_msg_id = ?", senderID, clientMsgID).
+		First(&message).Error; err != nil {
 		return nil, err
 	}
 	return &message, nil
@@ -48,6 +63,22 @@ func (r *Repository) ListMessagesByConversationID(ctx context.Context, conversat
 	return messages, nil
 }
 
+// ListMessagesAfterMessageID 按 id 升序返回比 afterMessageID 更新的消息，用于断线重连后的增量补拉。
+func (r *Repository) ListMessagesAfterMessageID(ctx context.Context, conversationID, afterMessageID uint, limit int) ([]model.Message, error) {
+	var messages []model.Message
+	query := r.db.WithContext(ctx).
+		Where("conversation_id = ? AND id > ?", conversationID, afterMessageID).
+		Order("id ASC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	if err := query.Find(&messages).Error; err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
+// GetLastMessageByConversationID 查询会话中最新的一条消息。
 func (r *Repository) GetLastMessageByConversationID(ctx context.Context, conversationID uint) (*model.Message, error) {
 	var message model.Message
 	if err := r.db.WithContext(ctx).
@@ -59,6 +90,7 @@ func (r *Repository) GetLastMessageByConversationID(ctx context.Context, convers
 	return &message, nil
 }
 
+// CountUnreadMessages 统计用户在指定会话中尚未读取的消息数。
 func (r *Repository) CountUnreadMessages(ctx context.Context, conversationID, userID, lastReadMessageID uint) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).
@@ -66,6 +98,49 @@ func (r *Repository) CountUnreadMessages(ctx context.Context, conversationID, us
 		Where("conversation_id = ? AND id > ? AND sender_id <> ?", conversationID, lastReadMessageID, userID).
 		Count(&count).Error
 	return count, err
+}
+
+// GetLastMessagesByConversationIDs 一次取出每个会话的最后一条消息。
+// 子查询取每个会话的 MAX(id)，在 PostgreSQL 和 SQLite（测试）下行为一致。
+func (r *Repository) GetLastMessagesByConversationIDs(ctx context.Context, conversationIDs []uint) ([]model.Message, error) {
+	if len(conversationIDs) == 0 {
+		return nil, nil
+	}
+	var messages []model.Message
+	sub := r.db.Model(&model.Message{}).
+		Select("MAX(id)").
+		Where("conversation_id IN ?", conversationIDs).
+		Group("conversation_id")
+	err := r.db.WithContext(ctx).Where("id IN (?)", sub).Find(&messages).Error
+	return messages, err
+}
+
+// CountUnreadMessagesByConversationIDs 一条 SQL 算出用户在多个会话中的未读数，
+// 每个会话按该用户自己的 last_read_message_id 截断。
+func (r *Repository) CountUnreadMessagesByConversationIDs(ctx context.Context, userID uint, conversationIDs []uint) (map[uint]int64, error) {
+	result := make(map[uint]int64, len(conversationIDs))
+	if len(conversationIDs) == 0 {
+		return result, nil
+	}
+	rows := []struct {
+		ConversationID uint
+		Count          int64
+	}{}
+	err := r.db.WithContext(ctx).
+		Table("messages").
+		Select("messages.conversation_id AS conversation_id, COUNT(*) AS count").
+		Joins("JOIN conversation_members cm ON cm.conversation_id = messages.conversation_id AND cm.user_id = ?", userID).
+		Where("messages.conversation_id IN ?", conversationIDs).
+		Where("messages.id > cm.last_read_message_id AND messages.sender_id <> ?", userID).
+		Group("messages.conversation_id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		result[row.ConversationID] = row.Count
+	}
+	return result, nil
 }
 
 // ListPotentialFileMessagesByFileID 查询可能引用某个文件 ID 的文件消息。

@@ -7,7 +7,7 @@ import (
 )
 
 var repo *repository.Repository
-var cacheStore cache.Store = cache.NewNoopStore()
+var cacheStore cache.Store = cache.NewRedisStore(nil)
 
 func Init(r *repository.Repository) {
 	repo = r
@@ -15,7 +15,7 @@ func Init(r *repository.Repository) {
 
 func InitCacheStore(store cache.Store) {
 	if store == nil {
-		store = cache.NewNoopStore()
+		store = cache.NewRedisStore(nil)
 	}
 	cacheStore = store
 }

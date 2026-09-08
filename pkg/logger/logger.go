@@ -75,6 +75,7 @@ func InitLogger(logpath, loglevel string) {
 	)
 }
 
+// Debug 记录调试级别日志。
 func Debug(msg string, fields ...zap.Field) {
 	if Logger == nil {
 		return
@@ -82,6 +83,7 @@ func Debug(msg string, fields ...zap.Field) {
 	Logger.Debug(msg, fields...)
 }
 
+// Info 记录信息级别日志。
 func Info(msg string, fields ...zap.Field) {
 	if Logger == nil {
 		return
@@ -89,6 +91,7 @@ func Info(msg string, fields ...zap.Field) {
 	Logger.Info(msg, fields...)
 }
 
+// Warn 记录警告级别日志。
 func Warn(msg string, fields ...zap.Field) {
 	if Logger == nil {
 		return
@@ -96,6 +99,7 @@ func Warn(msg string, fields ...zap.Field) {
 	Logger.Warn(msg, fields...)
 }
 
+// Error 记录错误级别日志。
 func Error(msg string, fields ...zap.Field) {
 	if Logger == nil {
 		return

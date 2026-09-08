@@ -5,6 +5,7 @@ import (
 	"chat_proj/internal/dto"
 	"chat_proj/internal/model"
 	presencepkg "chat_proj/internal/presence"
+	"chat_proj/internal/testutil"
 	"context"
 	"testing"
 
@@ -388,7 +389,7 @@ func TestListFriends(t *testing.T) {
 func TestUserProfileCacheAndUpdateInvalidation(t *testing.T) {
 	db := setupTestDB(t)
 	initRepo(db)
-	InitCacheStore(cache.NewMemoryStore())
+	InitCacheStore(cache.NewRedisStore(testutil.Redis(t)))
 	defer InitCacheStore(nil)
 
 	user1 := createTestUser(t, db, "cache-owner@test.com")
