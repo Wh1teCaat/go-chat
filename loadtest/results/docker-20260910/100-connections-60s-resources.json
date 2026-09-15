@@ -1,0 +1,905 @@
+{
+  "exit_code": 0,
+  "samples": [
+    {
+      "utc": "2026-09-10T08:26:04.679538+00:00",
+      "phase": "setup",
+      "containers": [
+        {
+          "BlockIO": "193kB / 2.79MB",
+          "CPUPerc": "743.36%",
+          "Container": "bc77be9c48082318dc4ffde74be6382419adab86d810498f2f47a6b620dabe12",
+          "ID": "bc77be9c4808",
+          "MemPerc": "0.31%",
+          "MemUsage": "49.04MiB / 15.51GiB",
+          "Name": "gochat-bench-backend1-1",
+          "NetIO": "254MB / 205MB",
+          "PIDs": "31"
+        },
+        {
+          "BlockIO": "0B / 229kB",
+          "CPUPerc": "0.36%",
+          "Container": "7203520d345d29b40916872aee006e711c9401896ce0e146d802bfdd4c7a6bb0",
+          "ID": "7203520d345d",
+          "MemPerc": "0.29%",
+          "MemUsage": "45.91MiB / 15.51GiB",
+          "Name": "gochat-bench-backend2-1",
+          "NetIO": "243MB / 190MB",
+          "PIDs": "30"
+        },
+        {
+          "BlockIO": "60.8MB / 482MB",
+          "CPUPerc": "15.43%",
+          "Container": "6a0a57f9ed405ad9880ec1f5eb21e2d0510d10f8ce0bd38984a1b7f329fe7370",
+          "ID": "6a0a57f9ed40",
+          "MemPerc": "1.58%",
+          "MemUsage": "250.8MiB / 15.51GiB",
+          "Name": "gochat-bench-postgres-1",
+          "NetIO": "161MB / 185MB",
+          "PIDs": "68"
+        },
+        {
+          "BlockIO": "31MB / 184kB",
+          "CPUPerc": "5.58%",
+          "Container": "f11831e41dd3b0cf11c97a2f6f8c26cd3acd5a64c46cdd270c6bda66fbccfc62",
+          "ID": "f11831e41dd3",
+          "MemPerc": "0.09%",
+          "MemUsage": "13.98MiB / 15.51GiB",
+          "Name": "gochat-bench-redis-1",
+          "NetIO": "116MB / 204MB",
+          "PIDs": "12"
+        }
+      ]
+    },
+    {
+      "utc": "2026-09-10T08:26:08.012567+00:00",
+      "phase": "measurement",
+      "containers": [
+        {
+          "BlockIO": "193kB / 2.79MB",
+          "CPUPerc": "171.80%",
+          "Container": "bc77be9c48082318dc4ffde74be6382419adab86d810498f2f47a6b620dabe12",
+          "ID": "bc77be9c4808",
+          "MemPerc": "0.27%",
+          "MemUsage": "43.6MiB / 15.51GiB",
+          "Name": "gochat-bench-backend1-1",
+          "NetIO": "261MB / 212MB",
+          "PIDs": "31"
+        },
+        {
+          "BlockIO": "0B / 229kB",
+          "CPUPerc": "170.25%",
+          "Container": "7203520d345d29b40916872aee006e711c9401896ce0e146d802bfdd4c7a6bb0",
+          "ID": "7203520d345d",
+          "MemPerc": "0.25%",
+          "MemUsage": "40.26MiB / 15.51GiB",
+          "Name": "gochat-bench-backend2-1",
+          "NetIO": "250MB / 196MB",
+          "PIDs": "30"
+        },
+        {
+          "BlockIO": "60.8MB / 490MB",
+          "CPUPerc": "300.24%",
+          "Container": "6a0a57f9ed405ad9880ec1f5eb21e2d0510d10f8ce0bd38984a1b7f329fe7370",
+          "ID": "6a0a57f9ed40",
+          "MemPerc": "1.59%",
+          "MemUsage": "252.6MiB / 15.51GiB",
+          "Name": "gochat-bench-postgres-1",
+          "NetIO": "166MB / 191MB",
+          "PIDs": "68"
+        },
+        {
+          "BlockIO": "31MB / 184kB",
+          "CPUPerc": "25.08%",
+          "Container": "f11831e41dd3b0cf11c97a2f6f8c26cd3acd5a64c46cdd270c6bda66fbccfc62",
+          "ID": "f11831e41dd3",
+          "MemPerc": "0.08%",
+          "MemUsage": "11.94MiB / 15.51GiB",
+          "Name": "gochat-bench-redis-1",
+          "NetIO": "119MB / 210MB",
+          "PIDs": "6"
+        }
+      ]
+    },
+    {
+      "utc": "2026-09-10T08:26:12.067846+00:00",
+      "phase": "measurement",
+      "containers": [
+        {
+          "BlockIO": "193kB / 2.79MB",
+          "CPUPerc": "177.84%",
+          "Container": "bc77be9c48082318dc4ffde74be6382419adab86d810498f2f47a6b620dabe12",
+          "ID": "bc77be9c4808",
+          "MemPerc": "0.27%",
+          "MemUsage": "42.51MiB / 15.51GiB",
+          "Name": "gochat-bench-backend1-1",
+          "NetIO": "270MB / 220MB",
+          "PIDs": "31"
+        },
+        {
+          "BlockIO": "0B / 229kB",
+          "CPUPerc": "177.38%",
+          "Container": "7203520d345d29b40916872aee006e711c9401896ce0e146d802bfdd4c7a6bb0",
+          "ID": "7203520d345d",
+          "MemPerc": "0.24%",
+          "MemUsage": "38.61MiB / 15.51GiB",
+          "Name": "gochat-bench-backend2-1",
+          "NetIO": "261MB / 207MB",
+          "PIDs": "30"
+        },
+        {
+          "BlockIO": "60.8MB / 503MB",
+          "CPUPerc": "306.29%",
+          "Container": "6a0a57f9ed405ad9880ec1f5eb21e2d0510d10f8ce0bd38984a1b7f329fe7370",
+          "ID": "6a0a57f9ed40",
+          "MemPerc": "1.60%",
+          "MemUsage": "254.4MiB / 15.51GiB",
+          "Name": "gochat-bench-postgres-1",
+          "NetIO": "175MB / 201MB",
+          "PIDs": "68"
+        },
+        {
+          "BlockIO": "31MB / 184kB",
+          "CPUPerc": "25.70%",
+          "Container": "f11831e41dd3b0cf11c97a2f6f8c26cd3acd5a64c46cdd270c6bda66fbccfc62",
+          "ID": "f11831e41dd3",
+          "MemPerc": "0.08%",
+          "MemUsage": "12.27MiB / 15.51GiB",
+          "Name": "gochat-bench-redis-1",
+          "NetIO": "126MB / 221MB",
+          "PIDs": "6"
+        }
+      ]
+    },
+    {
+      "utc": "2026-09-10T08:26:16.268912+00:00",
+      "phase": "measurement",
+      "containers": [
+        {
+          "BlockIO": "193kB / 2.79MB",
+          "CPUPerc": "188.01%",
+          "Container": "bc77be9c48082318dc4ffde74be6382419adab86d810498f2f47a6b620dabe12",
+          "ID": "bc77be9c4808",
+          "MemPerc": "0.29%",
+          "MemUsage": "45.29MiB / 15.51GiB",
+          "Name": "gochat-bench-backend1-1",
+          "NetIO": "285MB / 233MB",
+          "PIDs": "31"
+        },
+        {
+          "BlockIO": "0B / 229kB",
+          "CPUPerc": "185.38%",
+          "Container": "7203520d345d29b40916872aee006e711c9401896ce0e146d802bfdd4c7a6bb0",
+          "ID": "7203520d345d",
+          "MemPerc": "0.25%",
+          "MemUsage": "38.93MiB / 15.51GiB",
+          "Name": "gochat-bench-backend2-1",
+          "NetIO": "273MB / 217MB",
+          "PIDs": "30"
+        },
+        {
+          "BlockIO": "60.8MB / 533MB",
+          "CPUPerc": "325.56%",
+          "Container": "6a0a57f9ed405ad9880ec1f5eb21e2d0510d10f8ce0bd38984a1b7f329fe7370",
+          "ID": "6a0a57f9ed40",
+          "MemPerc": "1.64%",
+          "MemUsage": "260.1MiB / 15.51GiB",
+          "Name": "gochat-bench-postgres-1",
+          "NetIO": "184MB / 211MB",
+          "PIDs": "74"
+        },
+        {
+          "BlockIO": "31MB / 184kB",
+          "CPUPerc": "30.24%",
+          "Container": "f11831e41dd3b0cf11c97a2f6f8c26cd3acd5a64c46cdd270c6bda66fbccfc62",
+          "ID": "f11831e41dd3",
+          "MemPerc": "0.07%",
+          "MemUsage": "11.68MiB / 15.51GiB",
+          "Name": "gochat-bench-redis-1",
+          "NetIO": "132MB / 232MB",
+          "PIDs": "6"
+        }
+      ]
+    },
+    {
+      "utc": "2026-09-10T08:26:20.341124+00:00",
+      "phase": "measurement",
+      "containers": [
+        {
+          "BlockIO": "193kB / 2.79MB",
+          "CPUPerc": "179.99%",
+          "Container": "bc77be9c48082318dc4ffde74be6382419adab86d810498f2f47a6b620dabe12",
+          "ID": "bc77be9c4808",
+          "MemPerc": "0.27%",
+          "MemUsage": "43.24MiB / 15.51GiB",
+          "Name": "gochat-bench-backend1-1",
+          "NetIO": "297MB / 244MB",
+          "PIDs": "31"
+        },
+        {
+          "BlockIO": "0B / 229kB",
+          "CPUPerc": "185.80%",
+          "Container": "7203520d345d29b40916872aee006e711c9401896ce0e146d802bfdd4c7a6bb0",
+          "ID": "7203520d345d",
+          "MemPerc": "0.25%",
+          "MemUsage": "39.55MiB / 15.51GiB",
+          "Name": "gochat-bench-backend2-1",
+          "NetIO": "285MB / 228MB",
+          "PIDs": "30"
+        },
+        {
+          "BlockIO": "60.8MB / 546MB",
+          "CPUPerc": "324.22%",
+          "Container": "6a0a57f9ed405ad9880ec1f5eb21e2d0510d10f8ce0bd38984a1b7f329fe7370",
+          "ID": "6a0a57f9ed40",
+          "MemPerc": "1.64%",
+          "MemUsage": "261MiB / 15.51GiB",
+          "Name": "gochat-bench-postgres-1",
+          "NetIO": "192MB / 221MB",
+          "PIDs": "68"
+        },
+        {
+          "BlockIO": "31MB / 184kB",
+          "CPUPerc": "24.40%",
+          "Container": "f11831e41dd3b0cf11c97a2f6f8c26cd3acd5a64c46cdd270c6bda66fbccfc62",
+          "ID": "f11831e41dd3",
+          "MemPerc": "0.08%",
+          "MemUsage": "12.08MiB / 15.51GiB",
+          "Name": "gochat-bench-redis-1",
+          "NetIO": "137MB / 241MB",
+          "PIDs": "6"
+        }
+      ]
+    },
+    {
+      "utc": "2026-09-10T08:26:24.446244+00:00",
+      "phase": "measurement",
+      "containers": [
+        {
+          "BlockIO": "193kB / 2.79MB",
+          "CPUPerc": "184.54%",
+          "Container": "bc77be9c48082318dc4ffde74be6382419adab86d810498f2f47a6b620dabe12",
+          "ID": "bc77be9c4808",
+          "MemPerc": "0.27%",
+          "MemUsage": "42.89MiB / 15.51GiB",
+          "Name": "gochat-bench-backend1-1",
+          "NetIO": "309MB / 255MB",
+          "PIDs": "31"
+        },
+        {
+          "BlockIO": "0B / 229kB",
+          "CPUPerc": "178.30%",
+          "Container": "7203520d345d29b40916872aee006e711c9401896ce0e146d802bfdd4c7a6bb0",
+          "ID": "7203520d345d",
+          "MemPerc": "0.24%",
+          "MemUsage": "38.83MiB / 15.51GiB",
+          "Name": "gochat-bench-backend2-1",
+          "NetIO": "294MB / 236MB",
+          "PIDs": "30"
+        },
+        {
+          "BlockIO": "60.8MB / 560MB",
+          "CPUPerc": "324.50%",
+          "Container": "6a0a57f9ed405ad9880ec1f5eb21e2d0510d10f8ce0bd38984a1b7f329fe7370",
+          "ID": "6a0a57f9ed40",
+          "MemPerc": "1.66%",
+          "MemUsage": "264.1MiB / 15.51GiB",
+          "Name": "gochat-bench-postgres-1",
+          "NetIO": "201MB / 232MB",
+          "PIDs": "68"
+        },
+        {
+          "BlockIO": "31MB / 184kB",
+          "CPUPerc": "32.31%",
+          "Container": "f11831e41dd3b0cf11c97a2f6f8c26cd3acd5a64c46cdd270c6bda66fbccfc62",
+          "ID": "f11831e41dd3",
+          "MemPerc": "0.08%",
+          "MemUsage": "13.25MiB / 15.51GiB",
+          "Name": "gochat-bench-redis-1",
+          "NetIO": "145MB / 255MB",
+          "PIDs": "6"
+        }
+      ]
+    },
+    {
+      "utc": "2026-09-10T08:26:28.305854+00:00",
+      "phase": "measurement",
+      "containers": [
+        {
+          "BlockIO": "193kB / 2.79MB",
+          "CPUPerc": "179.58%",
+          "Container": "bc77be9c48082318dc4ffde74be6382419adab86d810498f2f47a6b620dabe12",
+          "ID": "bc77be9c4808",
+          "MemPerc": "0.27%",
+          "MemUsage": "42.78MiB / 15.51GiB",
+          "Name": "gochat-bench-backend1-1",
+          "NetIO": "320MB / 264MB",
+          "PIDs": "31"
+        },
+        {
+          "BlockIO": "0B / 311kB",
+          "CPUPerc": "185.35%",
+          "Container": "7203520d345d29b40916872aee006e711c9401896ce0e146d802bfdd4c7a6bb0",
+          "ID": "7203520d345d",
+          "MemPerc": "0.25%",
+          "MemUsage": "39.8MiB / 15.51GiB",
+          "Name": "gochat-bench-backend2-1",
+          "NetIO": "309MB / 249MB",
+          "PIDs": "30"
+        },
+        {
+          "BlockIO": "60.8MB / 588MB",
+          "CPUPerc": "321.37%",
+          "Container": "6a0a57f9ed405ad9880ec1f5eb21e2d0510d10f8ce0bd38984a1b7f329fe7370",
+          "ID": "6a0a57f9ed40",
+          "MemPerc": "1.68%",
+          "MemUsage": "267MiB / 15.51GiB",
+          "Name": "gochat-bench-postgres-1",
+          "NetIO": "210MB / 241MB",
+          "PIDs": "68"
+        },
+        {
+          "BlockIO": "31MB / 553kB",
+          "CPUPerc": "30.87%",
+          "Container": "f11831e41dd3b0cf11c97a2f6f8c26cd3acd5a64c46cdd270c6bda66fbccfc62",
+          "ID": "f11831e41dd3",
+          "MemPerc": "0.09%",
+          "MemUsage": "14.13MiB / 15.51GiB",
+          "Name": "gochat-bench-redis-1",
+          "NetIO": "151MB / 266MB",
+          "PIDs": "6"
+        }
+      ]
+    },
+    {
+      "utc": "2026-09-10T08:26:32.391712+00:00",
+      "phase": "measurement",
+      "containers": [
+        {
+          "BlockIO": "193kB / 2.99MB",
+          "CPUPerc": "170.94%",
+          "Container": "bc77be9c48082318dc4ffde74be6382419adab86d810498f2f47a6b620dabe12",
+          "ID": "bc77be9c4808",
+          "MemPerc": "0.27%",
+          "MemUsage": "43.21MiB / 15.51GiB",
+          "Name": "gochat-bench-backend1-1",
+          "NetIO": "332MB / 275MB",
+          "PIDs": "31"
+        },
+        {
+          "BlockIO": "0B / 311kB",
+          "CPUPerc": "168.12%",
+          "Container": "7203520d345d29b40916872aee006e711c9401896ce0e146d802bfdd4c7a6bb0",
+          "ID": "7203520d345d",
+          "MemPerc": "0.24%",
+          "MemUsage": "38.85MiB / 15.51GiB",
+          "Name": "gochat-bench-backend2-1",
+          "NetIO": "320MB / 260MB",
+          "PIDs": "30"
+        },
+        {
+          "BlockIO": "60.8MB / 615MB",
+          "CPUPerc": "317.20%",
+          "Container": "6a0a57f9ed405ad9880ec1f5eb21e2d0510d10f8ce0bd38984a1b7f329fe7370",
+          "ID": "6a0a57f9ed40",
+          "MemPerc": "1.70%",
+          "MemUsage": "270MiB / 15.51GiB",
+          "Name": "gochat-bench-postgres-1",
+          "NetIO": "216MB / 249MB",
+          "PIDs": "68"
+        },
+        {
+          "BlockIO": "31MB / 553kB",
+          "CPUPerc": "26.63%",
+          "Container": "f11831e41dd3b0cf11c97a2f6f8c26cd3acd5a64c46cdd270c6bda66fbccfc62",
+          "ID": "f11831e41dd3",
+          "MemPerc": "0.08%",
+          "MemUsage": "13.5MiB / 15.51GiB",
+          "Name": "gochat-bench-redis-1",
+          "NetIO": "157MB / 277MB",
+          "PIDs": "6"
+        }
+      ]
+    },
+    {
+      "utc": "2026-09-10T08:26:36.469406+00:00",
+      "phase": "measurement",
+      "containers": [
+        {
+          "BlockIO": "193kB / 2.99MB",
+          "CPUPerc": "183.36%",
+          "Container": "bc77be9c48082318dc4ffde74be6382419adab86d810498f2f47a6b620dabe12",
+          "ID": "bc77be9c4808",
+          "MemPerc": "0.27%",
+          "MemUsage": "42.97MiB / 15.51GiB",
+          "Name": "gochat-bench-backend1-1",
+          "NetIO": "344MB / 286MB",
+          "PIDs": "31"
+        },
+        {
+          "BlockIO": "0B / 315kB",
+          "CPUPerc": "186.67%",
+          "Container": "7203520d345d29b40916872aee006e711c9401896ce0e146d802bfdd4c7a6bb0",
+          "ID": "7203520d345d",
+          "MemPerc": "0.25%",
+          "MemUsage": "39MiB / 15.51GiB",
+          "Name": "gochat-bench-backend2-1",
+          "NetIO": "332MB / 271MB",
+          "PIDs": "30"
+        },
+        {
+          "BlockIO": "60.8MB / 637MB",
+          "CPUPerc": "332.83%",
+          "Container": "6a0a57f9ed405ad9880ec1f5eb21e2d0510d10f8ce0bd38984a1b7f329fe7370",
+          "ID": "6a0a57f9ed40",
+          "MemPerc": "1.72%",
+          "MemUsage": "273.1MiB / 15.51GiB",
+          "Name": "gochat-bench-postgres-1",
+          "NetIO": "227MB / 261MB",
+          "PIDs": "68"
+        },
+        {
+          "BlockIO": "31MB / 553kB",
+          "CPUPerc": "33.80%",
+          "Container": "f11831e41dd3b0cf11c97a2f6f8c26cd3acd5a64c46cdd270c6bda66fbccfc62",
+          "ID": "f11831e41dd3",
+          "MemPerc": "0.08%",
+          "MemUsage": "13.44MiB / 15.51GiB",
+          "Name": "gochat-bench-redis-1",
+          "NetIO": "164MB / 288MB",
+          "PIDs": "6"
+        }
+      ]
+    },
+    {
+      "utc": "2026-09-10T08:26:40.538680+00:00",
+      "phase": "measurement",
+      "containers": [
+        {
+          "BlockIO": "193kB / 2.99MB",
+          "CPUPerc": "178.40%",
+          "Container": "bc77be9c48082318dc4ffde74be6382419adab86d810498f2f47a6b620dabe12",
+          "ID": "bc77be9c4808",
+          "MemPerc": "0.27%",
+          "MemUsage": "42.36MiB / 15.51GiB",
+          "Name": "gochat-bench-backend1-1",
+          "NetIO": "356MB / 297MB",
+          "PIDs": "31"
+        },
+        {
+          "BlockIO": "0B / 315kB",
+          "CPUPerc": "174.33%",
+          "Container": "7203520d345d29b40916872aee006e711c9401896ce0e146d802bfdd4c7a6bb0",
+          "ID": "7203520d345d",
+          "MemPerc": "0.24%",
+          "MemUsage": "38.85MiB / 15.51GiB",
+          "Name": "gochat-bench-backend2-1",
+          "NetIO": "344MB / 281MB",
+          "PIDs": "36"
+        },
+        {
+          "BlockIO": "60.8MB / 647MB",
+          "CPUPerc": "315.36%",
+          "Container": "6a0a57f9ed405ad9880ec1f5eb21e2d0510d10f8ce0bd38984a1b7f329fe7370",
+          "ID": "6a0a57f9ed40",
+          "MemPerc": "1.74%",
+          "MemUsage": "276.8MiB / 15.51GiB",
+          "Name": "gochat-bench-postgres-1",
+          "NetIO": "234MB / 269MB",
+          "PIDs": "68"
+        },
+        {
+          "BlockIO": "31MB / 553kB",
+          "CPUPerc": "29.26%",
+          "Container": "f11831e41dd3b0cf11c97a2f6f8c26cd3acd5a64c46cdd270c6bda66fbccfc62",
+          "ID": "f11831e41dd3",
+          "MemPerc": "0.09%",
+          "MemUsage": "13.76MiB / 15.51GiB",
+          "Name": "gochat-bench-redis-1",
+          "NetIO": "170MB / 299MB",
+          "PIDs": "6"
+        }
+      ]
+    },
+    {
+      "utc": "2026-09-10T08:26:44.634551+00:00",
+      "phase": "measurement",
+      "containers": [
+        {
+          "BlockIO": "193kB / 2.99MB",
+          "CPUPerc": "186.68%",
+          "Container": "bc77be9c48082318dc4ffde74be6382419adab86d810498f2f47a6b620dabe12",
+          "ID": "bc77be9c4808",
+          "MemPerc": "0.26%",
+          "MemUsage": "42.09MiB / 15.51GiB",
+          "Name": "gochat-bench-backend1-1",
+          "NetIO": "368MB / 308MB",
+          "PIDs": "31"
+        },
+        {
+          "BlockIO": "0B / 315kB",
+          "CPUPerc": "177.74%",
+          "Container": "7203520d345d29b40916872aee006e711c9401896ce0e146d802bfdd4c7a6bb0",
+          "ID": "7203520d345d",
+          "MemPerc": "0.24%",
+          "MemUsage": "38.57MiB / 15.51GiB",
+          "Name": "gochat-bench-backend2-1",
+          "NetIO": "356MB / 292MB",
+          "PIDs": "30"
+        },
+        {
+          "BlockIO": "60.8MB / 677MB",
+          "CPUPerc": "324.58%",
+          "Container": "6a0a57f9ed405ad9880ec1f5eb21e2d0510d10f8ce0bd38984a1b7f329fe7370",
+          "ID": "6a0a57f9ed40",
+          "MemPerc": "1.76%",
+          "MemUsage": "280.2MiB / 15.51GiB",
+          "Name": "gochat-bench-postgres-1",
+          "NetIO": "242MB / 279MB",
+          "PIDs": "74"
+        },
+        {
+          "BlockIO": "31MB / 553kB",
+          "CPUPerc": "30.28%",
+          "Container": "f11831e41dd3b0cf11c97a2f6f8c26cd3acd5a64c46cdd270c6bda66fbccfc62",
+          "ID": "f11831e41dd3",
+          "MemPerc": "0.09%",
+          "MemUsage": "13.68MiB / 15.51GiB",
+          "Name": "gochat-bench-redis-1",
+          "NetIO": "177MB / 311MB",
+          "PIDs": "6"
+        }
+      ]
+    },
+    {
+      "utc": "2026-09-10T08:26:48.037811+00:00",
+      "phase": "measurement",
+      "containers": [
+        {
+          "BlockIO": "193kB / 2.99MB",
+          "CPUPerc": "180.23%",
+          "Container": "bc77be9c48082318dc4ffde74be6382419adab86d810498f2f47a6b620dabe12",
+          "ID": "bc77be9c4808",
+          "MemPerc": "0.27%",
+          "MemUsage": "42.76MiB / 15.51GiB",
+          "Name": "gochat-bench-backend1-1",
+          "NetIO": "378MB / 316MB",
+          "PIDs": "31"
+        },
+        {
+          "BlockIO": "0B / 315kB",
+          "CPUPerc": "176.37%",
+          "Container": "7203520d345d29b40916872aee006e711c9401896ce0e146d802bfdd4c7a6bb0",
+          "ID": "7203520d345d",
+          "MemPerc": "0.24%",
+          "MemUsage": "38.7MiB / 15.51GiB",
+          "Name": "gochat-bench-backend2-1",
+          "NetIO": "366MB / 301MB",
+          "PIDs": "30"
+        },
+        {
+          "BlockIO": "60.8MB / 691MB",
+          "CPUPerc": "365.74%",
+          "Container": "6a0a57f9ed405ad9880ec1f5eb21e2d0510d10f8ce0bd38984a1b7f329fe7370",
+          "ID": "6a0a57f9ed40",
+          "MemPerc": "1.77%",
+          "MemUsage": "281.9MiB / 15.51GiB",
+          "Name": "gochat-bench-postgres-1",
+          "NetIO": "252MB / 290MB",
+          "PIDs": "68"
+        },
+        {
+          "BlockIO": "31MB / 553kB",
+          "CPUPerc": "27.44%",
+          "Container": "f11831e41dd3b0cf11c97a2f6f8c26cd3acd5a64c46cdd270c6bda66fbccfc62",
+          "ID": "f11831e41dd3",
+          "MemPerc": "0.08%",
+          "MemUsage": "13.44MiB / 15.51GiB",
+          "Name": "gochat-bench-redis-1",
+          "NetIO": "182MB / 320MB",
+          "PIDs": "6"
+        }
+      ]
+    },
+    {
+      "utc": "2026-09-10T08:26:52.114000+00:00",
+      "phase": "measurement",
+      "containers": [
+        {
+          "BlockIO": "193kB / 2.99MB",
+          "CPUPerc": "182.18%",
+          "Container": "bc77be9c48082318dc4ffde74be6382419adab86d810498f2f47a6b620dabe12",
+          "ID": "bc77be9c4808",
+          "MemPerc": "0.27%",
+          "MemUsage": "43.38MiB / 15.51GiB",
+          "Name": "gochat-bench-backend1-1",
+          "NetIO": "387MB / 325MB",
+          "PIDs": "31"
+        },
+        {
+          "BlockIO": "0B / 315kB",
+          "CPUPerc": "208.44%",
+          "Container": "7203520d345d29b40916872aee006e711c9401896ce0e146d802bfdd4c7a6bb0",
+          "ID": "7203520d345d",
+          "MemPerc": "0.25%",
+          "MemUsage": "39.61MiB / 15.51GiB",
+          "Name": "gochat-bench-backend2-1",
+          "NetIO": "378MB / 312MB",
+          "PIDs": "30"
+        },
+        {
+          "BlockIO": "60.8MB / 704MB",
+          "CPUPerc": "362.92%",
+          "Container": "6a0a57f9ed405ad9880ec1f5eb21e2d0510d10f8ce0bd38984a1b7f329fe7370",
+          "ID": "6a0a57f9ed40",
+          "MemPerc": "1.80%",
+          "MemUsage": "286.1MiB / 15.51GiB",
+          "Name": "gochat-bench-postgres-1",
+          "NetIO": "260MB / 300MB",
+          "PIDs": "73"
+        },
+        {
+          "BlockIO": "31MB / 553kB",
+          "CPUPerc": "32.43%",
+          "Container": "f11831e41dd3b0cf11c97a2f6f8c26cd3acd5a64c46cdd270c6bda66fbccfc62",
+          "ID": "f11831e41dd3",
+          "MemPerc": "0.09%",
+          "MemUsage": "13.79MiB / 15.51GiB",
+          "Name": "gochat-bench-redis-1",
+          "NetIO": "188MB / 331MB",
+          "PIDs": "6"
+        }
+      ]
+    },
+    {
+      "utc": "2026-09-10T08:26:56.216955+00:00",
+      "phase": "measurement",
+      "containers": [
+        {
+          "BlockIO": "193kB / 2.99MB",
+          "CPUPerc": "183.35%",
+          "Container": "bc77be9c48082318dc4ffde74be6382419adab86d810498f2f47a6b620dabe12",
+          "ID": "bc77be9c4808",
+          "MemPerc": "0.27%",
+          "MemUsage": "42.25MiB / 15.51GiB",
+          "Name": "gochat-bench-backend1-1",
+          "NetIO": "402MB / 338MB",
+          "PIDs": "31"
+        },
+        {
+          "BlockIO": "0B / 315kB",
+          "CPUPerc": "190.61%",
+          "Container": "7203520d345d29b40916872aee006e711c9401896ce0e146d802bfdd4c7a6bb0",
+          "ID": "7203520d345d",
+          "MemPerc": "0.24%",
+          "MemUsage": "38.54MiB / 15.51GiB",
+          "Name": "gochat-bench-backend2-1",
+          "NetIO": "390MB / 322MB",
+          "PIDs": "30"
+        },
+        {
+          "BlockIO": "60.8MB / 734MB",
+          "CPUPerc": "325.52%",
+          "Container": "6a0a57f9ed405ad9880ec1f5eb21e2d0510d10f8ce0bd38984a1b7f329fe7370",
+          "ID": "6a0a57f9ed40",
+          "MemPerc": "1.81%",
+          "MemUsage": "288MiB / 15.51GiB",
+          "Name": "gochat-bench-postgres-1",
+          "NetIO": "269MB / 310MB",
+          "PIDs": "68"
+        },
+        {
+          "BlockIO": "31MB / 553kB",
+          "CPUPerc": "27.35%",
+          "Container": "f11831e41dd3b0cf11c97a2f6f8c26cd3acd5a64c46cdd270c6bda66fbccfc62",
+          "ID": "f11831e41dd3",
+          "MemPerc": "0.09%",
+          "MemUsage": "13.77MiB / 15.51GiB",
+          "Name": "gochat-bench-redis-1",
+          "NetIO": "195MB / 343MB",
+          "PIDs": "6"
+        }
+      ]
+    },
+    {
+      "utc": "2026-09-10T08:27:00.292531+00:00",
+      "phase": "measurement",
+      "containers": [
+        {
+          "BlockIO": "193kB / 2.99MB",
+          "CPUPerc": "185.18%",
+          "Container": "bc77be9c48082318dc4ffde74be6382419adab86d810498f2f47a6b620dabe12",
+          "ID": "bc77be9c4808",
+          "MemPerc": "0.27%",
+          "MemUsage": "43.17MiB / 15.51GiB",
+          "Name": "gochat-bench-backend1-1",
+          "NetIO": "414MB / 349MB",
+          "PIDs": "31"
+        },
+        {
+          "BlockIO": "0B / 315kB",
+          "CPUPerc": "187.15%",
+          "Container": "7203520d345d29b40916872aee006e711c9401896ce0e146d802bfdd4c7a6bb0",
+          "ID": "7203520d345d",
+          "MemPerc": "0.25%",
+          "MemUsage": "40.14MiB / 15.51GiB",
+          "Name": "gochat-bench-backend2-1",
+          "NetIO": "402MB / 333MB",
+          "PIDs": "30"
+        },
+        {
+          "BlockIO": "60.8MB / 748MB",
+          "CPUPerc": "329.10%",
+          "Container": "6a0a57f9ed405ad9880ec1f5eb21e2d0510d10f8ce0bd38984a1b7f329fe7370",
+          "ID": "6a0a57f9ed40",
+          "MemPerc": "1.83%",
+          "MemUsage": "290.9MiB / 15.51GiB",
+          "Name": "gochat-bench-postgres-1",
+          "NetIO": "278MB / 320MB",
+          "PIDs": "68"
+        },
+        {
+          "BlockIO": "31MB / 553kB",
+          "CPUPerc": "27.87%",
+          "Container": "f11831e41dd3b0cf11c97a2f6f8c26cd3acd5a64c46cdd270c6bda66fbccfc62",
+          "ID": "f11831e41dd3",
+          "MemPerc": "0.09%",
+          "MemUsage": "13.59MiB / 15.51GiB",
+          "Name": "gochat-bench-redis-1",
+          "NetIO": "199MB / 351MB",
+          "PIDs": "6"
+        }
+      ]
+    },
+    {
+      "utc": "2026-09-10T08:27:04.413874+00:00",
+      "phase": "measurement",
+      "containers": [
+        {
+          "BlockIO": "193kB / 3MB",
+          "CPUPerc": "204.25%",
+          "Container": "bc77be9c48082318dc4ffde74be6382419adab86d810498f2f47a6b620dabe12",
+          "ID": "bc77be9c4808",
+          "MemPerc": "0.27%",
+          "MemUsage": "43.48MiB / 15.51GiB",
+          "Name": "gochat-bench-backend1-1",
+          "NetIO": "426MB / 360MB",
+          "PIDs": "31"
+        },
+        {
+          "BlockIO": "0B / 324kB",
+          "CPUPerc": "205.20%",
+          "Container": "7203520d345d29b40916872aee006e711c9401896ce0e146d802bfdd4c7a6bb0",
+          "ID": "7203520d345d",
+          "MemPerc": "0.25%",
+          "MemUsage": "39.58MiB / 15.51GiB",
+          "Name": "gochat-bench-backend2-1",
+          "NetIO": "414MB / 344MB",
+          "PIDs": "30"
+        },
+        {
+          "BlockIO": "60.8MB / 778MB",
+          "CPUPerc": "367.48%",
+          "Container": "6a0a57f9ed405ad9880ec1f5eb21e2d0510d10f8ce0bd38984a1b7f329fe7370",
+          "ID": "6a0a57f9ed40",
+          "MemPerc": "1.85%",
+          "MemUsage": "293.2MiB / 15.51GiB",
+          "Name": "gochat-bench-postgres-1",
+          "NetIO": "287MB / 330MB",
+          "PIDs": "68"
+        },
+        {
+          "BlockIO": "31MB / 553kB",
+          "CPUPerc": "37.33%",
+          "Container": "f11831e41dd3b0cf11c97a2f6f8c26cd3acd5a64c46cdd270c6bda66fbccfc62",
+          "ID": "f11831e41dd3",
+          "MemPerc": "0.08%",
+          "MemUsage": "13.44MiB / 15.51GiB",
+          "Name": "gochat-bench-redis-1",
+          "NetIO": "206MB / 362MB",
+          "PIDs": "6"
+        }
+      ]
+    },
+    {
+      "utc": "2026-09-10T08:27:08.027410+00:00",
+      "phase": "measurement",
+      "containers": [
+        {
+          "BlockIO": "193kB / 3MB",
+          "CPUPerc": "0.02%",
+          "Container": "bc77be9c48082318dc4ffde74be6382419adab86d810498f2f47a6b620dabe12",
+          "ID": "bc77be9c4808",
+          "MemPerc": "0.27%",
+          "MemUsage": "43.58MiB / 15.51GiB",
+          "Name": "gochat-bench-backend1-1",
+          "NetIO": "430MB / 364MB",
+          "PIDs": "31"
+        },
+        {
+          "BlockIO": "0B / 324kB",
+          "CPUPerc": "2.31%",
+          "Container": "7203520d345d29b40916872aee006e711c9401896ce0e146d802bfdd4c7a6bb0",
+          "ID": "7203520d345d",
+          "MemPerc": "0.25%",
+          "MemUsage": "39.19MiB / 15.51GiB",
+          "Name": "gochat-bench-backend2-1",
+          "NetIO": "419MB / 348MB",
+          "PIDs": "30"
+        },
+        {
+          "BlockIO": "60.8MB / 783MB",
+          "CPUPerc": "0.04%",
+          "Container": "6a0a57f9ed405ad9880ec1f5eb21e2d0510d10f8ce0bd38984a1b7f329fe7370",
+          "ID": "6a0a57f9ed40",
+          "MemPerc": "1.85%",
+          "MemUsage": "293.9MiB / 15.51GiB",
+          "Name": "gochat-bench-postgres-1",
+          "NetIO": "290MB / 334MB",
+          "PIDs": "68"
+        },
+        {
+          "BlockIO": "31MB / 553kB",
+          "CPUPerc": "2.77%",
+          "Container": "f11831e41dd3b0cf11c97a2f6f8c26cd3acd5a64c46cdd270c6bda66fbccfc62",
+          "ID": "f11831e41dd3",
+          "MemPerc": "0.08%",
+          "MemUsage": "13.48MiB / 15.51GiB",
+          "Name": "gochat-bench-redis-1",
+          "NetIO": "210MB / 370MB",
+          "PIDs": "6"
+        }
+      ]
+    },
+    {
+      "utc": "2026-09-10T08:27:12.064848+00:00",
+      "phase": "measurement",
+      "containers": [
+        {
+          "BlockIO": "193kB / 3MB",
+          "CPUPerc": "0.04%",
+          "Container": "bc77be9c48082318dc4ffde74be6382419adab86d810498f2f47a6b620dabe12",
+          "ID": "bc77be9c4808",
+          "MemPerc": "0.27%",
+          "MemUsage": "42.99MiB / 15.51GiB",
+          "Name": "gochat-bench-backend1-1",
+          "NetIO": "430MB / 364MB",
+          "PIDs": "31"
+        },
+        {
+          "BlockIO": "0B / 328kB",
+          "CPUPerc": "2.27%",
+          "Container": "7203520d345d29b40916872aee006e711c9401896ce0e146d802bfdd4c7a6bb0",
+          "ID": "7203520d345d",
+          "MemPerc": "0.24%",
+          "MemUsage": "37.95MiB / 15.51GiB",
+          "Name": "gochat-bench-backend2-1",
+          "NetIO": "419MB / 348MB",
+          "PIDs": "30"
+        },
+        {
+          "BlockIO": "60.8MB / 786MB",
+          "CPUPerc": "2.89%",
+          "Container": "6a0a57f9ed405ad9880ec1f5eb21e2d0510d10f8ce0bd38984a1b7f329fe7370",
+          "ID": "6a0a57f9ed40",
+          "MemPerc": "1.85%",
+          "MemUsage": "294.1MiB / 15.51GiB",
+          "Name": "gochat-bench-postgres-1",
+          "NetIO": "290MB / 334MB",
+          "PIDs": "68"
+        },
+        {
+          "BlockIO": "31MB / 553kB",
+          "CPUPerc": "2.59%",
+          "Container": "f11831e41dd3b0cf11c97a2f6f8c26cd3acd5a64c46cdd270c6bda66fbccfc62",
+          "ID": "f11831e41dd3",
+          "MemPerc": "0.09%",
+          "MemUsage": "13.7MiB / 15.51GiB",
+          "Name": "gochat-bench-redis-1",
+          "NetIO": "210MB / 370MB",
+          "PIDs": "6"
+        }
+      ]
+    }
+  ]
+}

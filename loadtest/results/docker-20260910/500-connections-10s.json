@@ -1,0 +1,62 @@
+{
+  "Run": "18d3e81dbdf7a304",
+  "Config": {
+    "URLs": "http://127.0.0.1:18081,http://127.0.0.1:18082",
+    "Pairs": 250,
+    "Messages": 200,
+    "Rate": 20,
+    "Drain": 5000000000,
+    "Output": "loadtest/results/docker-20260910/500-connections-10s.json"
+  },
+  "StartedUTC": "2026-09-10T08:24:51Z",
+  "Connections": 500,
+  "Upstreams": {
+    "http://127.0.0.1:18081": 250,
+    "http://127.0.0.1:18082": 250
+  },
+  "CrossInstancePairs": 250,
+  "SendSeconds": 9.959983277,
+  "ObservationSeconds": 14.960680778,
+  "SuccessfulWritesPerSecond": 10040.177500189593,
+  "DeliveriesPerSecond": 2290.738002404024,
+  "Planned": 100000,
+  "SuccessfulWrites": 100000,
+  "WriteErrors": 0,
+  "BusinessErrors": 0,
+  "UnexpectedReadErrors": 0,
+  "ACKs": 34273,
+  "MissingACKs": 65727,
+  "PeerDeliveries": 34271,
+  "MissingPeerDeliveries": 65729,
+  "MissingSelfEchoes": 65730,
+  "DuplicateACKs": 0,
+  "DuplicatePushes": 0,
+  "SenderSequenceRegressions": 0,
+  "ConversationIDRegressions": 7310,
+  "ACKMilliseconds": {
+    "count": 34273,
+    "P50": 6242.756033,
+    "P95": 11012.109106,
+    "P99": 11485.495427,
+    "Max": 12022.71165
+  },
+  "PeerMilliseconds": {
+    "count": 34271,
+    "P50": 6251.897456,
+    "P95": 11016.350978,
+    "P99": 11486.800578,
+    "Max": 12024.890176
+  },
+  "OrderExamples": [
+    "receiver=0 previous_max_id=64437 arrived_id=64340 sender=1 seq=1",
+    "receiver=0 previous_max_id=65349 arrived_id=65345 sender=1 seq=2",
+    "receiver=0 previous_max_id=66637 arrived_id=66417 sender=1 seq=4",
+    "receiver=0 previous_max_id=67811 arrived_id=67797 sender=1 seq=7",
+    "receiver=0 previous_max_id=69730 arrived_id=69600 sender=0 seq=12",
+    "receiver=1 previous_max_id=64437 arrived_id=64340 sender=1 seq=1",
+    "receiver=1 previous_max_id=65349 arrived_id=65345 sender=1 seq=2",
+    "receiver=1 previous_max_id=66637 arrived_id=66417 sender=1 seq=4",
+    "receiver=1 previous_max_id=67811 arrived_id=67797 sender=1 seq=7",
+    "receiver=1 previous_max_id=68332 arrived_id=68279 sender=1 seq=8"
+  ]
+}

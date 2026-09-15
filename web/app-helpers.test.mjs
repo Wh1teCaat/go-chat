@@ -19,6 +19,7 @@ import {
   decodeTokenUserID,
   isOwnMessage,
   latestServerMessageID,
+	latestContinuousMessageSeq,
   mergeIncomingMessage,
   messageMatchesTarget,
   messagePreview,
@@ -93,6 +94,12 @@ test("latestServerMessageID ignores local temp ids", () => {
     ]),
     11,
   );
+});
+
+test("latestContinuousMessageSeq stops at the first missing sequence", () => {
+  assert.equal(latestContinuousMessageSeq([]), 0);
+  assert.equal(latestContinuousMessageSeq([{ seq: 9 }, { seq: 11 }, { seq: 10 }]), 11);
+  assert.equal(latestContinuousMessageSeq([{ seq: 9 }, { seq: 11 }]), 9);
 });
 
 test("normalizeChatTarget supports friends, groups, and sessions", () => {
@@ -297,6 +304,14 @@ test("sortMessagesAscending orders oldest first", () => {
   ];
 
   assert.deepEqual(sortMessagesAscending(input).map((item) => item.id), [1, 2, 3]);
+});
+
+test("sortMessagesAscending prefers the authoritative conversation sequence", () => {
+  const input = [
+    { id: 1, seq: 2, createdAt: "2026-06-10T10:00:01Z" },
+    { id: 2, seq: 1, createdAt: "2026-06-10T10:00:02Z" },
+  ];
+  assert.deepEqual(sortMessagesAscending(input).map((item) => item.seq), [1, 2]);
 });
 
 test("decodeTokenUserID reads jwt user_id without verifying signature", () => {

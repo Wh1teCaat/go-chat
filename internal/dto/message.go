@@ -29,6 +29,7 @@ type MessageAckOutput struct {
 	// ClientMsgID 原样返回客户端；MessageID 是服务端落库后的真实消息 ID。
 	ClientMsgID string `json:"clientMsgID,omitempty"`
 	MessageID   uint   `json:"messageID"`
+	Seq         uint64 `json:"seq"`
 	CreatedAt   string `json:"createdAt"`
 }
 
@@ -46,7 +47,9 @@ type ListMessagesInput struct {
 	BeforeMessageID uint `json:"beforeMessageID"`
 	// AfterMessageID 是断线重连后的增量补拉游标，按 id 升序返回更新的消息；与 BeforeMessageID 互斥。
 	AfterMessageID uint `json:"afterMessageID"`
-	Limit          int  `json:"limit"`
+	// AfterSeq 是会话有序投递启用后的连续游标。不能与 AfterMessageID 同时传入。
+	AfterSeq uint64 `json:"afterSeq"`
+	Limit    int    `json:"limit"`
 }
 
 type MarkMessageReadInput struct {
@@ -74,6 +77,7 @@ type MessageSnapshotOutput struct {
 
 type MessageOutput struct {
 	ID        uint   `json:"id"`
+	Seq       uint64 `json:"seq"`
 	SenderID  uint   `json:"senderID"`
 	Content   string `json:"content"`
 	CreatedAt string `json:"createdAt"`
@@ -83,4 +87,20 @@ type MessageOutput struct {
 	TargetID   uint              `json:"targetID,omitempty"`
 	// ClientMsgID 只在推送给发送方自己的连接时填充，发送端据此和本地"发送中"的消息去重。
 	ClientMsgID string `json:"clientMsgID,omitempty"`
+}
+
+// OrderedMessageEvent 是跨实例总线使用的规范化聊天事件。它不会直接发给浏览器；
+// 节点内 dispatcher 会根据接收用户生成 receiver-view 的 MessageOutput。
+type OrderedMessageEvent struct {
+	ConversationID uint              `json:"conversationID"`
+	Seq            uint64            `json:"seq"`
+	// PublishBaseSeq 是分配本条 seq 时数据库已确认发布的水位。Redis Lua 首次看到
+	// 该会话时用它确定等待的下一条序号；它不是浏览器协议字段。
+	PublishBaseSeq uint64            `json:"publishBaseSeq"`
+	SenderID       uint              `json:"senderID"`
+	TargetType     MessageTargetType `json:"targetType"`
+	// TargetID 是发送者视角的目标：单聊为对方用户，群聊为群 ID。
+	TargetID     uint          `json:"targetID"`
+	RecipientIDs []uint        `json:"recipientIDs"`
+	Message      MessageOutput `json:"message"`
 }

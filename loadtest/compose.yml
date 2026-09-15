@@ -1,0 +1,65 @@
+# Run with: docker compose -p gochat-bench -f loadtest/compose.yml up --build -d
+x-backend: &backend
+  build:
+    context: ..
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  volumes:
+    - ./config.toml:/app/configs/config.toml:ro
+  healthcheck:
+    test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+    interval: 2s
+    timeout: 2s
+    retries: 30
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: benchmark-only
+      POSTGRES_DB: chat_benchmark
+    volumes:
+      - bench_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d chat_benchmark"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  backend1:
+    <<: *backend
+    ports:
+      - "127.0.0.1:18081:8080"
+  backend2:
+    <<: *backend
+    # Serialize initial migrations on an empty shared database.
+    depends_on:
+      backend1:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18082:8080"
+  backend3:
+    <<: *backend
+    depends_on:
+      backend1:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18083:8080"
+  backend4:
+    <<: *backend
+    depends_on:
+      backend1:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18084:8080"
+volumes:
+  bench_pg:

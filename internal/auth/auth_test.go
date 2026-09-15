@@ -5,6 +5,21 @@ import (
 	"testing"
 )
 
+func TestValidateTokenRejectsUnknownExpectedType(t *testing.T) {
+	if err := Init("test-secret"); err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := GenerateAccessToken(42, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, typ := range []TokenType{"", "unknown"} {
+		if _, err := ValidateToken(token, typ); err == nil {
+			t.Fatalf("expected rejection for type %q", typ)
+		}
+	}
+}
+
 func TestPackageFunctionsUseInitializedSecret(t *testing.T) {
 	if err := Init("secret-a"); err != nil {
 		t.Fatalf("Init returned error: %v", err)
@@ -15,7 +30,7 @@ func TestPackageFunctionsUseInitializedSecret(t *testing.T) {
 		t.Fatalf("GenerateAccessToken returned error: %v", err)
 	}
 
-	claims, err := ValidateToken(token)
+	claims, err := ValidateToken(token, TokenTypeAccess)
 	if err != nil {
 		t.Fatalf("ValidateToken with same secret returned error: %v", err)
 	}
@@ -26,7 +41,7 @@ func TestPackageFunctionsUseInitializedSecret(t *testing.T) {
 	if err := Init("secret-b"); err != nil {
 		t.Fatalf("Init returned error: %v", err)
 	}
-	if _, err := ValidateToken(token); err == nil || !strings.Contains(err.Error(), "invalid token signature") {
+	if _, err := ValidateToken(token, TokenTypeAccess); err == nil || !strings.Contains(err.Error(), "invalid token signature") {
 		t.Fatalf("expected invalid token signature with different secret, got %v", err)
 	}
 }
@@ -48,17 +63,17 @@ func TestRefreshTokenIsSeparateFromAccessToken(t *testing.T) {
 		t.Fatal("expected refresh token to carry a jti")
 	}
 
-	claims, err := ValidateRefreshToken(refreshToken)
+	claims, err := ValidateToken(refreshToken, TokenTypeRefresh)
 	if err != nil {
-		t.Fatalf("ValidateRefreshToken returned error: %v", err)
+		t.Fatalf("ValidateToken refresh returned error: %v", err)
 	}
 	if claims.ID != jti {
 		t.Fatalf("expected claims jti %q, got %q", jti, claims.ID)
 	}
-	if _, err := ValidateRefreshToken(accessToken); err == nil || !strings.Contains(err.Error(), "invalid token type") {
+	if _, err := ValidateToken(accessToken, TokenTypeRefresh); err == nil || !strings.Contains(err.Error(), "invalid token type") {
 		t.Fatalf("expected access token to be rejected as refresh token, got %v", err)
 	}
-	if _, err := ValidateToken(refreshToken); err == nil || !strings.Contains(err.Error(), "invalid token type") {
+	if _, err := ValidateToken(refreshToken, TokenTypeAccess); err == nil || !strings.Contains(err.Error(), "invalid token type") {
 		t.Fatalf("expected refresh token to be rejected as access token, got %v", err)
 	}
 }

@@ -1,0 +1,62 @@
+{
+  "Run": "18d3e840227fd70e",
+  "Config": {
+    "URLs": "http://127.0.0.1:18081,http://127.0.0.1:18082",
+    "Pairs": 500,
+    "Messages": 60,
+    "Rate": 1,
+    "Drain": 5000000000,
+    "Output": "loadtest/results/docker-20260910/1000-connections-1msg-60s.json"
+  },
+  "StartedUTC": "2026-09-10T08:27:19Z",
+  "Connections": 1000,
+  "Upstreams": {
+    "http://127.0.0.1:18081": 500,
+    "http://127.0.0.1:18082": 500
+  },
+  "CrossInstancePairs": 500,
+  "SendSeconds": 59.016599808,
+  "ObservationSeconds": 64.018863055,
+  "SuccessfulWritesPerSecond": 1016.6631116533198,
+  "DeliveriesPerSecond": 937.2237671333322,
+  "Planned": 60000,
+  "SuccessfulWrites": 60000,
+  "WriteErrors": 0,
+  "BusinessErrors": 0,
+  "UnexpectedReadErrors": 0,
+  "ACKs": 60000,
+  "MissingACKs": 0,
+  "PeerDeliveries": 60000,
+  "MissingPeerDeliveries": 0,
+  "MissingSelfEchoes": 0,
+  "DuplicateACKs": 0,
+  "DuplicatePushes": 0,
+  "SenderSequenceRegressions": 0,
+  "ConversationIDRegressions": 11045,
+  "ACKMilliseconds": {
+    "count": 60000,
+    "P50": 956.977879,
+    "P95": 17784.72237,
+    "P99": 19399.491053,
+    "Max": 20461.870204
+  },
+  "PeerMilliseconds": {
+    "count": 60000,
+    "P50": 958.980511,
+    "P95": 17791.476844,
+    "P99": 19401.55594,
+    "Max": 20462.19622
+  },
+  "OrderExamples": [
+    "receiver=0 previous_max_id=266695 arrived_id=266228 sender=1 seq=2",
+    "receiver=0 previous_max_id=267743 arrived_id=267683 sender=0 seq=3",
+    "receiver=0 previous_max_id=278701 arrived_id=278574 sender=0 seq=15",
+    "receiver=0 previous_max_id=282080 arrived_id=281989 sender=1 seq=20",
+    "receiver=0 previous_max_id=287230 arrived_id=287002 sender=1 seq=24",
+    "receiver=1 previous_max_id=266695 arrived_id=266228 sender=1 seq=2",
+    "receiver=1 previous_max_id=267743 arrived_id=267683 sender=0 seq=3",
+    "receiver=1 previous_max_id=278701 arrived_id=278574 sender=0 seq=15",
+    "receiver=1 previous_max_id=282080 arrived_id=281989 sender=1 seq=20",
+    "receiver=1 previous_max_id=287230 arrived_id=287002 sender=1 seq=24"
+  ]
+}

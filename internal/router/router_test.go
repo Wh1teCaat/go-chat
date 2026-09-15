@@ -3,11 +3,13 @@ package router
 import (
 	"bytes"
 	"chat_proj/internal/auth"
+	"chat_proj/internal/cache"
 	"chat_proj/internal/dto"
 	"chat_proj/internal/model"
 	"chat_proj/internal/repository"
 	"chat_proj/internal/service"
 	"chat_proj/internal/storage"
+	"chat_proj/internal/testutil"
 	"chat_proj/pkg/logger"
 	"crypto/sha256"
 	"encoding/hex"
@@ -1475,6 +1477,7 @@ func login(t *testing.T, r http.Handler, email, password string) string {
 }
 
 func setupRouterTestDB(t *testing.T) *gorm.DB {
+	service.InitTokenStore(cache.NewRedisStore(testutil.Redis(t)))
 	t.Helper()
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})

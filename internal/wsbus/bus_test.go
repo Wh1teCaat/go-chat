@@ -12,6 +12,8 @@ import (
 	"chat_proj/internal/config"
 	"chat_proj/pkg/logger"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
@@ -124,5 +126,85 @@ func TestRedisBusBroadcastsAcrossInstances(t *testing.T) {
 			t.Fatalf("timed out waiting for cross-instance delivery: instance1=%d instance2=%d", len(calls1), len(calls2))
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestRedisBusOrderedPublishBuffersOutOfOrderSequence 覆盖跨实例最容易出现的反转：
+// seq=2 先抵达 Redis 时不得发布，seq=1 到达后两条必须按 1、2 进入每个实例。
+func TestRedisBusOrderedPublishBuffersOutOfOrderSequence(t *testing.T) {
+	mini, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("start miniredis: %v", err)
+	}
+	defer mini.Close()
+
+	client1 := redis.NewClient(&redis.Options{Addr: mini.Addr()})
+	defer client1.Close()
+	client2 := redis.NewClient(&redis.Options{Addr: mini.Addr()})
+	defer client2.Close()
+
+	sender1 := &recordingSender{}
+	sender2 := &recordingSender{}
+	bus1, err := NewRedisBus(context.Background(), client1, sender1)
+	if err != nil {
+		t.Fatalf("NewRedisBus(1): %v", err)
+	}
+	defer bus1.Close()
+	bus2, err := NewRedisBus(context.Background(), client2, sender2)
+	if err != nil {
+		t.Fatalf("NewRedisBus(2): %v", err)
+	}
+	defer bus2.Close()
+
+	publish := func(seq uint64) uint64 {
+		t.Helper()
+		through, err := bus1.PublishOrdered(context.Background(), 99, seq, 0, []uint{7}, map[string]any{
+			"type": "message", "data": map[string]any{"seq": seq},
+		})
+		if err != nil {
+			t.Fatalf("publish seq %d: %v", seq, err)
+		}
+		return through
+	}
+
+	if through := publish(2); through != 0 {
+		t.Fatalf("seq 2 must wait for the gap, got watermark %d", through)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if got := len(sender1.snapshot()) + len(sender2.snapshot()); got != 0 {
+		t.Fatalf("seq 2 published before seq 1: %d deliveries", got)
+	}
+	if through := publish(1); through != 2 {
+		t.Fatalf("expected seq 1 to release through 2, got %d", through)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if len(sender1.snapshot()) == 2 && len(sender2.snapshot()) == 2 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	for name, calls := range map[string][]recordedCall{"instance1": sender1.snapshot(), "instance2": sender2.snapshot()} {
+		if len(calls) != 2 {
+			t.Fatalf("%s got %d deliveries", name, len(calls))
+		}
+		for i, call := range calls {
+			raw, ok := call.message.(json.RawMessage)
+			if !ok {
+				t.Fatalf("%s message %d type = %T, want json.RawMessage", name, i, call.message)
+			}
+			var payload struct {
+				Data struct {
+					Seq uint64 `json:"seq"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(raw, &payload); err != nil {
+				t.Fatalf("decode %s message %d: %v", name, i, err)
+			}
+			if want := uint64(i + 1); payload.Data.Seq != want {
+				t.Fatalf("%s delivery %d seq = %d, want %d", name, i, payload.Data.Seq, want)
+			}
+		}
 	}
 }

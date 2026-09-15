@@ -1,0 +1,69 @@
+{
+  "utc": "2026-09-10T08:23:37.076774+00:00",
+  "docker": {
+    "version": "29.0.1",
+    "cpus": 16,
+    "memory_bytes": 16655212544,
+    "os": "Docker Desktop"
+  },
+  "containers": [
+    {
+      "name": "/gochat-bench-backend1-1",
+      "image": "sha256:149fa1f4083e2fd2ff4db85e6b11fb24b8d4810af9ca3f3d62b7b67481202d33",
+      "started": "2026-09-10T08:23:18.14695206Z",
+      "nano_cpus": 0,
+      "memory_limit": 0,
+      "ports": {
+        "8080/tcp": [
+          {
+            "HostIp": "127.0.0.1",
+            "HostPort": "18081"
+          }
+        ]
+      }
+    },
+    {
+      "name": "/gochat-bench-backend2-1",
+      "image": "sha256:f31917fba1bfde99ff854b921ef118758c30a6bf0f1cf100b5f7576df046f54c",
+      "started": "2026-09-10T08:23:21.6459754Z",
+      "nano_cpus": 0,
+      "memory_limit": 0,
+      "ports": {
+        "8080/tcp": [
+          {
+            "HostIp": "127.0.0.1",
+            "HostPort": "18082"
+          }
+        ]
+      }
+    },
+    {
+      "name": "/gochat-bench-postgres-1",
+      "image": "sha256:e684c11a6c7c127c1b7602063cc6a13db0a12b62dfd770d83936c089751d498d",
+      "started": "2026-09-10T08:23:09.784803096Z",
+      "nano_cpus": 0,
+      "memory_limit": 0,
+      "ports": {
+        "5432/tcp": null
+      }
+    },
+    {
+      "name": "/gochat-bench-redis-1",
+      "image": "sha256:487efc0616382465781b8fdc3d6d1db449e6fd80ae23bf48432a2da6b6929908",
+      "started": "2026-09-10T08:23:09.783214962Z",
+      "nano_cpus": 0,
+      "memory_limit": 0,
+      "ports": {
+        "6379/tcp": null
+      }
+    }
+  ],
+  "redis_subscribers": "ws:events\n2",
+  "git_revision": "c1c8d32b2d1cc35e4dba02adc8fc730ecf948f53",
+  "dirty_paths": "README.md\ncmd/main.go\ndocs/design/01-multi-instance-ws.md\ninternal/auth/auth.go\ninternal/auth/auth_test.go\ninternal/cache/redis.go\ninternal/cache/redis_integration_test.go\ninternal/cache/redis_test.go\ninternal/cache/store.go\ninternal/controller/user_test.go\ninternal/middleware/middleware.go\ninternal/router/router_test.go\ninternal/service/token.go\ninternal/ws/client.go\ninternal/ws/client_test.go\nweb/app.js",
+  "note": "Direct published backend ports; one endpoint per backend; shared Redis and PostgreSQL; test-only HTTP rate limit disabled; no nginx; existing unrelated containers left running.",
+  "versions": {
+    "redis": "7.4.9",
+    "postgresql": "16.14"
+  }
+}

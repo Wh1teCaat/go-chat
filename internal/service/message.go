@@ -6,6 +6,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"chat_proj/internal/dto"
@@ -16,13 +17,23 @@ import (
 	"gorm.io/gorm"
 )
 
-type messageService struct{}
+type messageService struct {
+	asyncCommit atomic.Bool
+}
 
 var MessageService = new(messageService)
 
+// InitMessageAsyncCommit 配置聊天消息事务的持久性策略。默认关闭，保持 PostgreSQL
+// 同步提交；开启后 ACK 不等待 WAL fsync，可降低 Docker/网络盘等慢存储上的尾延迟。
+func InitMessageAsyncCommit(enabled bool) {
+	MessageService.asyncCommit.Store(enabled)
+}
+
 type ConversationMessageResult struct {
-	Message     dto.MessageOutput
-	ReceiverIDs []uint
+	Message        dto.MessageOutput
+	ConversationID uint
+	PublishBaseSeq uint64
+	ReceiverIDs    []uint
 	// ClientMsgID 用于 ACK 关联客户端本地消息；非空时也会落库参与幂等去重。
 	ClientMsgID string
 	// TargetType/TargetID 是发送方视角的会话目标，推送给发送方其他设备时使用。
@@ -36,6 +47,10 @@ type MessageReadResult struct {
 	Event       dto.MessageReadOutput
 	ReceiverIDs []uint
 }
+
+// OrderedMessagePublisher 把一条已提交的规范化消息事件交给实时总线。
+// 调用方应只在 publish 成功后允许发布水位推进。
+type OrderedMessagePublisher func(ctx context.Context, event dto.OrderedMessageEvent) error
 
 // SendConversationMessage 校验会话成员和消息内容，持久化消息并返回接收者信息。
 func (s *messageService) SendConversationMessage(ctx context.Context, senderID uint, input dto.SendMessageInput) (*ConversationMessageResult, error) {
@@ -51,17 +66,6 @@ func (s *messageService) SendConversationMessage(ctx context.Context, senderID u
 	conversation, err := s.resolveConversation(ctx, senderID, input.TargetType, input.TargetID)
 	if err != nil {
 		return nil, err
-	}
-
-	// 幂等去重：客户端 ACK 丢失后重发同一条消息时，直接返回已落库的消息，不再二次入库。
-	if clientMsgID != "" {
-		existing, err := repo.GetMessageBySenderAndClientMsgID(ctx, senderID, clientMsgID)
-		if err == nil {
-			return s.duplicateMessageResult(existing, clientMsgID, input)
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, dbOperationError(err)
-		}
 	}
 
 	fileID, hasFile := fileIDFromMessageContent(content)
@@ -87,7 +91,19 @@ func (s *messageService) SendConversationMessage(ctx context.Context, senderID u
 		message.ClientMsgID = &clientMsgID
 	}
 	// 消息落库和文件绑定必须同事务：绑定失败时回滚消息，避免留下接收方无权下载附件的孤儿消息。
+	var publishBaseSeq uint64
 	err = repo.WithTransaction(func(tx *repository.Repository) error {
+		if s.asyncCommit.Load() {
+			if err := tx.EnableAsyncCommitForTransaction(ctx); err != nil {
+				return err
+			}
+		}
+		seq, publishedSeq, err := tx.ReserveNextConversationSeq(ctx, conversation.ID)
+		if err != nil {
+			return err
+		}
+		message.Seq = seq
+		publishBaseSeq = publishedSeq
 		if err := tx.CreateMessage(ctx, message); err != nil {
 			return err
 		}
@@ -107,28 +123,36 @@ func (s *messageService) SendConversationMessage(ctx context.Context, senderID u
 		return nil, dbOperationError(err)
 	}
 
-	receiverIDs, err := s.conversationReceiverIDs(ctx, conversation.ID, senderID)
-	if err != nil {
-		return nil, err
+	// 私聊已由 resolveConversation 的双成员 JOIN 同时完成权限校验，接收者就是 targetID，
+	// 无需在每条消息提交后再扫一次 conversation_members。群聊仍读取当前成员集合。
+	receiverIDs := []uint{input.TargetID}
+	if input.TargetType != dto.MessageTargetTypePrivate {
+		receiverIDs, err = s.conversationReceiverIDs(ctx, conversation.ID, senderID)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &ConversationMessageResult{
-		Message:     toMessageOutput(*message),
-		ReceiverIDs: receiverIDs,
-		ClientMsgID: clientMsgID,
-		TargetType:  input.TargetType,
-		TargetID:    input.TargetID,
+		Message:        toMessageOutput(*message),
+		ConversationID: conversation.ID,
+		PublishBaseSeq: publishBaseSeq,
+		ReceiverIDs:    receiverIDs,
+		ClientMsgID:    clientMsgID,
+		TargetType:     input.TargetType,
+		TargetID:       input.TargetID,
 	}, nil
 }
 
 // duplicateMessageResult 校验幂等消息内容并构造已有消息的发送结果。
 func (s *messageService) duplicateMessageResult(message *model.Message, clientMsgID string, input dto.SendMessageInput) (*ConversationMessageResult, error) {
 	return &ConversationMessageResult{
-		Message:     toMessageOutput(*message),
-		ClientMsgID: clientMsgID,
-		TargetType:  input.TargetType,
-		TargetID:    input.TargetID,
-		Duplicate:   true,
+		Message:        toMessageOutput(*message),
+		ConversationID: message.ConversationID,
+		ClientMsgID:    clientMsgID,
+		TargetType:     input.TargetType,
+		TargetID:       input.TargetID,
+		Duplicate:      true,
 	}, nil
 }
 
@@ -145,6 +169,147 @@ func (s *messageService) conversationReceiverIDs(ctx context.Context, conversati
 		}
 	}
 	return receiverIDs, nil
+}
+
+// PublishPendingConversationMessages 按会话 seq 串行发布已经提交但尚未确认发布的消息。
+// 会话行锁让多个实例可以共同触发恢复，而同一会话只会有一个实例按序调用 publisher。
+// publisher 在事务内执行：先成功交给总线、后推进水位。发布成功后水位写入失败会重发，
+// 因此下游必须按 seq 去重；发布失败则保持水位不变，留给下一次恢复任务。
+func (s *messageService) PublishPendingConversationMessages(ctx context.Context, conversationID uint, publisher OrderedMessagePublisher) error {
+	if publisher == nil {
+		return apperrors.ErrInvalidInput
+	}
+
+	const maxEventsPerDrain = 128
+	return repo.WithTransaction(func(tx *repository.Repository) error {
+		conversation, err := tx.GetConversationForUpdate(ctx, conversationID)
+		if err != nil {
+			return err
+		}
+		members, err := tx.ListConversationMembersByConversationID(ctx, conversationID)
+		if err != nil {
+			return err
+		}
+
+		for published := 0; published < maxEventsPerDrain; published++ {
+			next := conversation.LastPublishedSeq + 1
+			if next > conversation.LastSeq {
+				return nil
+			}
+			message, err := tx.GetMessageByConversationAndSeq(ctx, conversationID, next)
+			if err != nil {
+				return err
+			}
+			event, err := orderedMessageEvent(*conversation, *message, members)
+			if err != nil {
+				return err
+			}
+			if err := publisher(ctx, event); err != nil {
+				return err
+			}
+			if err := tx.AdvanceConversationPublishedSeq(ctx, conversationID, conversation.LastPublishedSeq, next); err != nil {
+				return err
+			}
+			conversation.LastPublishedSeq = next
+		}
+		return nil
+	})
+}
+
+// ListConversationsWithUnpublishedMessages 返回需要后台重试实时发布的会话。
+func (s *messageService) ListConversationsWithUnpublishedMessages(ctx context.Context, limit int) ([]uint, error) {
+	ids, err := repo.ListConversationIDsWithUnpublishedMessages(ctx, limit)
+	if err != nil {
+		return nil, dbOperationError(err)
+	}
+	return ids, nil
+}
+
+// HasUnpublishedConversationMessages 供 publisher 在释放本机去重标记后决定是否立即续排。
+func (s *messageService) HasUnpublishedConversationMessages(ctx context.Context, conversationID uint) (bool, error) {
+	has, err := repo.HasUnpublishedMessages(ctx, conversationID)
+	if err != nil {
+		return false, dbOperationError(err)
+	}
+	return has, nil
+}
+
+// MarkConversationMessagesPublished 确认 Redis 的会话序号门已经连续放行到 seq。
+// 该更新允许跨越多条消息：例如 seq=6 先到 Redis 等待，随后 seq=5 到达时 Lua 会一次
+// 放行 5、6，并把实际连续水位 6 返回给调用方。
+func (s *messageService) MarkConversationMessagesPublished(ctx context.Context, conversationID uint, seq uint64) error {
+	if conversationID == 0 || seq == 0 {
+		return nil
+	}
+	if err := repo.AdvanceConversationPublishedSeqAtLeast(ctx, conversationID, seq); err != nil {
+		return dbOperationError(err)
+	}
+	return nil
+}
+
+// LoadOrderedMessageEvents 从权威存储补齐某个会话连续游标之后的消息。
+// 它只供节点内 dispatcher 在 Redis 通知出现缺口时使用，不执行用户权限查询；
+// 事件仍只会经本机 Hub 投递给当前在线的连接。
+func (s *messageService) LoadOrderedMessageEvents(ctx context.Context, conversationID uint, afterSeq uint64, limit int) ([]dto.OrderedMessageEvent, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	conversation, err := repo.GetConversationByID(ctx, conversationID)
+	if err != nil {
+		return nil, dbOperationError(err)
+	}
+	members, err := repo.ListConversationMembersByConversationID(ctx, conversationID)
+	if err != nil {
+		return nil, dbOperationError(err)
+	}
+	messages, err := repo.ListMessagesAfterSeq(ctx, conversationID, afterSeq, limit)
+	if err != nil {
+		return nil, dbOperationError(err)
+	}
+	events := make([]dto.OrderedMessageEvent, 0, len(messages))
+	for _, message := range messages {
+		event, err := orderedMessageEvent(*conversation, message, members)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, event)
+	}
+	return events, nil
+}
+
+func orderedMessageEvent(conversation model.Conversation, message model.Message, members []model.ConversationMember) (dto.OrderedMessageEvent, error) {
+	event := dto.OrderedMessageEvent{
+		ConversationID: conversation.ID,
+		Seq:            message.Seq,
+		SenderID:       message.SenderID,
+		Message:        toMessageOutput(message),
+	}
+	for _, member := range members {
+		event.RecipientIDs = append(event.RecipientIDs, member.UserID)
+	}
+
+	switch conversation.Type {
+	case model.ConversationTypePrivate:
+		event.TargetType = dto.MessageTargetTypePrivate
+		for _, member := range members {
+			if member.UserID != message.SenderID {
+				event.TargetID = member.UserID
+				break
+			}
+		}
+		if event.TargetID == 0 {
+			return dto.OrderedMessageEvent{}, apperrors.ErrInvalidInput
+		}
+	case model.ConversationTypeGroup:
+		if conversation.GroupID == nil || *conversation.GroupID == 0 {
+			return dto.OrderedMessageEvent{}, apperrors.ErrInvalidInput
+		}
+		event.TargetType = dto.MessageTargetTypeGroup
+		event.TargetID = *conversation.GroupID
+	default:
+		return dto.OrderedMessageEvent{}, apperrors.ErrInvalidInput
+	}
+	return event, nil
 }
 
 type fileMessageContent struct {
@@ -166,6 +331,9 @@ func fileIDFromMessageContent(content string) (uint, bool) {
 
 // ListMessages 校验会话访问权限并分页返回消息记录。
 func (s *messageService) ListMessages(ctx context.Context, userID uint, input dto.ListMessagesInput) ([]dto.MessageOutput, error) {
+	if input.AfterMessageID > 0 && input.AfterSeq > 0 {
+		return nil, apperrors.WithMessage(apperrors.ErrInvalidInput, "afterMessageID and afterSeq are mutually exclusive")
+	}
 	conversation, err := s.resolveConversation(ctx, userID, input.TargetType, input.TargetID)
 	if err != nil {
 		return nil, err
@@ -175,7 +343,15 @@ func (s *messageService) ListMessages(ctx context.Context, userID uint, input dt
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	// afterMessageID 用于断线重连后的增量补拉，与向上翻历史的 beforeMessageID 互斥。
+	// afterSeq 是有序消息的连续游标；兼容客户端仍可使用 afterMessageID。
+	if input.AfterSeq > 0 {
+		messages, err := repo.ListMessagesAfterSeq(ctx, conversation.ID, input.AfterSeq, limit)
+		if err != nil {
+			return nil, dbOperationError(err)
+		}
+		return toMessageOutputs(messages), nil
+	}
+	// afterMessageID 用于旧版客户端的断线重连增量补拉。
 	if input.AfterMessageID > 0 {
 		messages, err := repo.ListMessagesAfterMessageID(ctx, conversation.ID, input.AfterMessageID, limit)
 		if err != nil {
@@ -383,12 +559,17 @@ func formatOptionalTime(t *time.Time) string {
 
 // toMessageOutput 将消息模型转换为对外输出结构。
 func toMessageOutput(message model.Message) dto.MessageOutput {
-	return dto.MessageOutput{
+	output := dto.MessageOutput{
 		ID:        message.ID,
+		Seq:       message.Seq,
 		SenderID:  message.SenderID,
 		Content:   message.Content,
 		CreatedAt: formatMessageTime(message.CreatedAt),
 	}
+	if message.ClientMsgID != nil {
+		output.ClientMsgID = *message.ClientMsgID
+	}
+	return output
 }
 
 // toMessageOutputs 批量将消息模型转换为对外输出结构。

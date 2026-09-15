@@ -22,7 +22,7 @@ var WSHub = ws.NewHub()
 
 // wsBus 是跨实例消息总线。默认进程内直投（单实例/测试）；
 // 多实例部署时 main 会注入 RedisBus，推送经 Redis Pub/Sub 广播到所有实例。
-var wsBus wsbus.Bus = wsbus.NewLocalBus(WSHub)
+var wsBus wsbus.Bus = wsbus.NewLocalBus(orderedDelivery)
 
 func InitWSBus(bus wsbus.Bus) {
 	if bus != nil {
@@ -33,11 +33,21 @@ func InitWSBus(bus wsbus.Bus) {
 // pushToUsers 把 envelope 推给目标用户的所有在线连接（可能分布在多个实例）。
 // 总线故障不影响主流程：消息已落库，离线端靠重连补拉兜底。
 func pushToUsers(ctx context.Context, userIDs []uint, envelope wsEnvelope) {
-	if err := wsBus.Publish(ctx, userIDs, envelope); err != nil {
+	if err := publishEnvelope(ctx, userIDs, envelope); err != nil {
 		logger.Warn("WSPushPublishFailed",
 			logger.String("type", string(envelope.Type)),
 			logger.String("error", err.Error()))
 	}
+}
+
+// publishEnvelope 将本地结构先规范化为 JSON，再交给本地/Redis 总线；两种总线因而走同一
+// 有序投递入口。调用方需要知道发布是否成功时可直接使用它，而不是忽略 Redis 降级错误。
+func publishEnvelope(ctx context.Context, userIDs []uint, envelope wsEnvelope) error {
+	raw, err := json.Marshal(envelope)
+	if err != nil {
+		return err
+	}
+	return wsBus.Publish(ctx, userIDs, json.RawMessage(raw))
 }
 
 var wsAllowedOrigins = map[string]struct{}{}
@@ -116,39 +126,60 @@ func handleWSMessage(ctx context.Context, senderID uint, payload []byte) error {
 		Data: dto.MessageAckOutput{
 			ClientMsgID: result.ClientMsgID,
 			MessageID:   result.Message.ID,
+			Seq:         result.Message.Seq,
 			CreatedAt:   result.Message.CreatedAt,
 		},
 	})
-	// 重复发送（ACK 丢失后的客户端重试）只需重发 ACK；消息第一次发送时已经推给过接收方。
 	if result.Duplicate {
+		// 首次发送可能在消息已提交后进程崩溃，重复请求只补 ACK，不重新广播；
+		// 唤醒恢复任务即可补发未确认水位。
+		orderedMessagePublisher.Enqueue(result.ConversationID)
 		return nil
 	}
 
-	// 推给接收方时带上接收端视角的会话目标：群聊就是群 ID；
-	// 私聊时接收方看到的目标是发送者本人，客户端据此归档到正确会话。
-	receiverMessage := result.Message
-	receiverMessage.TargetType = result.TargetType
-	receiverMessage.TargetID = result.TargetID
-	if result.TargetType == dto.MessageTargetTypePrivate {
-		receiverMessage.TargetID = senderID
+	event := orderedEventFromResult(senderID, result)
+	publishedThrough, publishErr := publishOrderedEvent(ctx, event)
+	if publishErr != nil {
+		logger.Warn("WSOrderedPublishDeferred",
+			logger.Uint("conversation_id", result.ConversationID),
+			logger.Any("seq", result.Message.Seq),
+			logger.String("error", publishErr.Error()))
+		orderedMessagePublisher.Enqueue(result.ConversationID)
+		return nil
 	}
-	// 接收方不需要主动拉取；服务端推送到达后，浏览器端 onmessage 回调会被触发。
-	pushToUsers(ctx, result.ReceiverIDs, wsEnvelope{
-		Type: dto.WSMessageTypeMessage,
-		Data: receiverMessage,
-	})
-
-	// 消息本体也推给发送者的全部连接（多标签页/多设备），带 clientMsgID 供发送端本地去重。
-	// 发起消息的那个连接会同时收到 ACK 和这条推送，客户端按消息 ID 去重。
-	senderMessage := result.Message
-	senderMessage.TargetType = result.TargetType
-	senderMessage.TargetID = result.TargetID
-	senderMessage.ClientMsgID = result.ClientMsgID
-	pushToUsers(ctx, []uint{senderID}, wsEnvelope{
-		Type: dto.WSMessageTypeMessage,
-		Data: senderMessage,
-	})
+	if publishedThrough > result.PublishBaseSeq {
+		// Redis 已确认连续放行，水位异步批量落库；不会把每条消息的 ACK/推送延迟
+		// 再绑定到一条 PostgreSQL UPDATE。崩溃窗口由后台恢复和 seq 去重覆盖。
+		orderedPublishedWatermarks.Confirm(result.ConversationID, publishedThrough)
+	}
 	return nil
+}
+
+// orderedEventFromResult 在消息提交后就能直接构造总线事件，避免热路径为每条消息重新
+// 查询会话、成员和消息。ReceiverIDs 来自同次权限校验，发送者也加入接收集合以同步其余设备。
+func orderedEventFromResult(senderID uint, result *service.ConversationMessageResult) dto.OrderedMessageEvent {
+	recipients := make([]uint, 0, len(result.ReceiverIDs)+1)
+	seen := make(map[uint]struct{}, len(result.ReceiverIDs)+1)
+	for _, userID := range append([]uint{senderID}, result.ReceiverIDs...) {
+		if userID == 0 {
+			continue
+		}
+		if _, exists := seen[userID]; exists {
+			continue
+		}
+		seen[userID] = struct{}{}
+		recipients = append(recipients, userID)
+	}
+	return dto.OrderedMessageEvent{
+		ConversationID: result.ConversationID,
+		Seq:            result.Message.Seq,
+		PublishBaseSeq: result.PublishBaseSeq,
+		SenderID:       senderID,
+		TargetType:     result.TargetType,
+		TargetID:       result.TargetID,
+		RecipientIDs:   recipients,
+		Message:        result.Message,
+	}
 }
 
 // sendWSError 向指定用户推送与客户端消息关联的错误事件。

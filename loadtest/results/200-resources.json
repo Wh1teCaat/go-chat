@@ -1,0 +1,17 @@
+{
+  "process_order": [
+    "postgres",
+    "redis",
+    "backend1",
+    "backend2",
+    "load_generator"
+  ],
+  "peak_rss_kb": [
+    32524,
+    15164,
+    55296,
+    54212,
+    29584
+  ],
+  "exit_code": 0
+}

@@ -1,0 +1,62 @@
+{
+  "Run": "18d3e79108227a24",
+  "Config": {
+    "URLs": "http://127.0.0.1:18081,http://127.0.0.1:18082",
+    "Pairs": 100,
+    "Messages": 200,
+    "Rate": 20,
+    "Drain": 5000000000,
+    "Output": "/home/y2/project/go-chat/loadtest/results/200-connections.json"
+  },
+  "StartedUTC": "2026-09-10T08:14:47Z",
+  "Connections": 200,
+  "Upstreams": {
+    "http://127.0.0.1:18081": 100,
+    "http://127.0.0.1:18082": 100
+  },
+  "CrossInstancePairs": 100,
+  "SendSeconds": 9.952462433,
+  "ObservationSeconds": 14.953618046999999,
+  "SuccessfulWritesPerSecond": 4019.105851368954,
+  "DeliveriesPerSecond": 2674.937923001505,
+  "Planned": 40000,
+  "SuccessfulWrites": 40000,
+  "WriteErrors": 0,
+  "BusinessErrors": 0,
+  "UnexpectedReadErrors": 0,
+  "ACKs": 40000,
+  "MissingACKs": 0,
+  "PeerDeliveries": 40000,
+  "MissingPeerDeliveries": 0,
+  "MissingSelfEchoes": 0,
+  "DuplicateACKs": 0,
+  "DuplicatePushes": 0,
+  "SenderSequenceRegressions": 0,
+  "ConversationIDRegressions": 7118,
+  "ACKMilliseconds": {
+    "count": 40000,
+    "P50": 2369.569455,
+    "P95": 4303.688059,
+    "P99": 4604.482286,
+    "Max": 4981.692189
+  },
+  "PeerMilliseconds": {
+    "count": 40000,
+    "P50": 2373.647648,
+    "P95": 4307.206182,
+    "P99": 4607.208845,
+    "Max": 4982.924252
+  },
+  "OrderExamples": [
+    "receiver=0 previous_max_id=26166 arrived_id=26121 sender=1 seq=10",
+    "receiver=0 previous_max_id=26883 arrived_id=26853 sender=1 seq=13",
+    "receiver=0 previous_max_id=27192 arrived_id=27172 sender=0 seq=16",
+    "receiver=0 previous_max_id=27378 arrived_id=27360 sender=1 seq=16",
+    "receiver=0 previous_max_id=27797 arrived_id=27705 sender=1 seq=18",
+    "receiver=1 previous_max_id=24843 arrived_id=24777 sender=1 seq=4",
+    "receiver=1 previous_max_id=26166 arrived_id=26121 sender=1 seq=10",
+    "receiver=1 previous_max_id=26559 arrived_id=26554 sender=1 seq=12",
+    "receiver=1 previous_max_id=26883 arrived_id=26853 sender=1 seq=13",
+    "receiver=1 previous_max_id=27378 arrived_id=27360 sender=1 seq=16"
+  ]
+}

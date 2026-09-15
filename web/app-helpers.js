@@ -34,6 +34,7 @@ export function mergeIncomingMessage(messages, incoming) {
         return {
           ...message,
           id: incomingID > 0 ? incomingID : message.id,
+			seq: Number(incoming.seq || message.seq || 0),
           createdAt: incoming.createdAt || message.createdAt,
           local: false,
           status: message.status === "read" ? "read" : "sent",
@@ -62,6 +63,30 @@ export function latestServerMessageID(messages) {
     if (id > latest) {
       latest = id;
     }
+  }
+  return latest;
+}
+
+// latestContinuousMessageSeq 返回本地已有服务端消息中最后一个连续会话序号。
+// 首条历史消息可以是任意 seq；一旦发现缺口，就不能把后面的最大 seq 当作补拉游标。
+export function latestContinuousMessageSeq(messages) {
+  const sequences = messages
+    .map((message) => Number(message?.seq || 0))
+    .filter((seq) => Number.isSafeInteger(seq) && seq > 0)
+    .sort((left, right) => left - right);
+  if (!sequences.length) {
+    return 0;
+  }
+  let latest = sequences[0];
+  for (let index = 1; index < sequences.length; index += 1) {
+    const seq = sequences[index];
+    if (seq === latest) {
+      continue;
+    }
+    if (seq !== latest + 1) {
+      break;
+    }
+    latest = seq;
   }
   return latest;
 }
@@ -119,6 +144,7 @@ export function createLocalMessage(payload, senderID, createdAt = new Date().toI
 
 export function applyMessageAck(messages, ack) {
 	const clientMsgID = String(ack?.clientMsgID || "");
+	const acknowledgedSeq = Number(ack?.seq || 0);
 	if (!clientMsgID) {
 		return messages;
 	}
@@ -129,6 +155,7 @@ export function applyMessageAck(messages, ack) {
 		return {
 			...message,
 			id: Number(ack.messageID || message.id),
+			...(acknowledgedSeq > 0 ? { seq: acknowledgedSeq } : {}),
 			createdAt: ack.createdAt || message.createdAt,
 			local: false,
 			status: "sent",
@@ -272,6 +299,11 @@ export function buildMemberRolePayload(groupID, userID, role) {
 
 export function sortMessagesAscending(messages) {
   return [...messages].sort((a, b) => {
+	const seqA = Number(a.seq || 0);
+	const seqB = Number(b.seq || 0);
+	if (seqA > 0 && seqB > 0 && seqA !== seqB) {
+		return seqA - seqB;
+	}
     const timeA = Date.parse(a.createdAt || "") || 0;
     const timeB = Date.parse(b.createdAt || "") || 0;
     if (timeA !== timeB) {

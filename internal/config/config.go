@@ -42,6 +42,8 @@ type DatabaseConfig struct {
 	SSLMode      string `mapstructure:"sslmode"`
 	TimeZone     string `mapstructure:"timezone"`
 	MaxOpenConns int    `mapstructure:"max_open_conns"`
+	// MessageAsyncCommit 仅让聊天消息事务不等待 WAL fsync；默认关闭，优先持久性。
+	MessageAsyncCommit bool `mapstructure:"message_async_commit"`
 }
 
 // PoolMaxOpen 返回数据库连接池的最大打开连接数，并提供安全默认值。
@@ -110,6 +112,7 @@ func Load() (*Config, error) {
 	v.SetDefault("database.sslmode", "disable")
 	v.SetDefault("database.timezone", "Asia/Shanghai")
 	v.SetDefault("database.max_open_conns", 30)
+	v.SetDefault("database.message_async_commit", false)
 	v.SetDefault("jwt.secret", "change-me")
 	v.SetDefault("cors.allowed_origins", DefaultCORSAllowedOrigins())
 	v.SetDefault("redis.enabled", true)

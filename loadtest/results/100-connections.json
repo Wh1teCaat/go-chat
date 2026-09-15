@@ -1,0 +1,62 @@
+{
+  "Run": "18d3e78cd6ba2349",
+  "Config": {
+    "URLs": "http://127.0.0.1:18081,http://127.0.0.1:18082",
+    "Pairs": 50,
+    "Messages": 200,
+    "Rate": 20,
+    "Drain": 5000000000,
+    "Output": "/home/y2/project/go-chat/loadtest/results/100-connections.json"
+  },
+  "StartedUTC": "2026-09-10T08:14:29Z",
+  "Connections": 100,
+  "Upstreams": {
+    "http://127.0.0.1:18081": 50,
+    "http://127.0.0.1:18082": 50
+  },
+  "CrossInstancePairs": 50,
+  "SendSeconds": 9.95128053,
+  "ObservationSeconds": 14.954069876,
+  "SuccessfulWritesPerSecond": 2009.7915981472186,
+  "DeliveriesPerSecond": 1337.4285506113813,
+  "Planned": 20000,
+  "SuccessfulWrites": 20000,
+  "WriteErrors": 0,
+  "BusinessErrors": 0,
+  "UnexpectedReadErrors": 0,
+  "ACKs": 20000,
+  "MissingACKs": 0,
+  "PeerDeliveries": 20000,
+  "MissingPeerDeliveries": 0,
+  "MissingSelfEchoes": 0,
+  "DuplicateACKs": 0,
+  "DuplicatePushes": 0,
+  "SenderSequenceRegressions": 0,
+  "ConversationIDRegressions": 3776,
+  "ACKMilliseconds": {
+    "count": 20000,
+    "P50": 24.673683,
+    "P95": 35.81595,
+    "P99": 49.464111,
+    "Max": 134.375014
+  },
+  "PeerMilliseconds": {
+    "count": 20000,
+    "P50": 27.905565,
+    "P95": 37.938018,
+    "P99": 54.371234,
+    "Max": 136.201238
+  },
+  "OrderExamples": [
+    "receiver=0 previous_max_id=4476 arrived_id=4456 sender=0 seq=5",
+    "receiver=0 previous_max_id=6022 arrived_id=6019 sender=0 seq=21",
+    "receiver=0 previous_max_id=6199 arrived_id=6189 sender=0 seq=22",
+    "receiver=0 previous_max_id=6342 arrived_id=6321 sender=1 seq=24",
+    "receiver=0 previous_max_id=6460 arrived_id=6405 sender=0 seq=25",
+    "receiver=1 previous_max_id=4233 arrived_id=4199 sender=1 seq=3",
+    "receiver=1 previous_max_id=4856 arrived_id=4807 sender=1 seq=9",
+    "receiver=1 previous_max_id=5573 arrived_id=5507 sender=1 seq=16",
+    "receiver=1 previous_max_id=5739 arrived_id=5730 sender=1 seq=18",
+    "receiver=1 previous_max_id=5834 arrived_id=5826 sender=1 seq=19"
+  ]
+}

@@ -1,0 +1,28 @@
+[log]
+path = "/app/logs/app.log"
+level = "info"
+[server]
+host = "0.0.0.0"
+port = 8080
+[database]
+host = "postgres"
+port = 5432
+user = "postgres"
+password = "benchmark-only"
+dbname = "chat_benchmark"
+sslmode = "disable"
+timezone = "Asia/Shanghai"
+# Four backend instances share PostgreSQL's default 100 connection limit. Keep the
+# aggregate app pool below that limit and leave room for health checks and inspection.
+max_open_conns = 20
+# Benchmark the per-message transaction setting used in deployment. Other transactions
+# retain PostgreSQL's default synchronous commit behavior.
+message_async_commit = true
+[jwt]
+secret = "isolated-loadtest-secret-do-not-use-in-production"
+[redis]
+enabled = true
+addr = "redis:6379"
+[rate_limit]
+# Setup creates many accounts from one IP. Do not change production rate limits.
+enabled = false

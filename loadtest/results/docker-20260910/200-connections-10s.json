@@ -1,0 +1,62 @@
+{
+  "Run": "18d3e81733862147",
+  "Config": {
+    "URLs": "http://127.0.0.1:18081,http://127.0.0.1:18082",
+    "Pairs": 100,
+    "Messages": 200,
+    "Rate": 20,
+    "Drain": 5000000000,
+    "Output": "loadtest/results/docker-20260910/200-connections-10s.json"
+  },
+  "StartedUTC": "2026-09-10T08:24:23Z",
+  "Connections": 200,
+  "Upstreams": {
+    "http://127.0.0.1:18081": 100,
+    "http://127.0.0.1:18082": 100
+  },
+  "CrossInstancePairs": 100,
+  "SendSeconds": 9.954066887,
+  "ObservationSeconds": 14.95480443,
+  "SuccessfulWritesPerSecond": 4018.458028671673,
+  "DeliveriesPerSecond": 2674.7257168912374,
+  "Planned": 40000,
+  "SuccessfulWrites": 40000,
+  "WriteErrors": 0,
+  "BusinessErrors": 0,
+  "UnexpectedReadErrors": 0,
+  "ACKs": 40000,
+  "MissingACKs": 0,
+  "PeerDeliveries": 40000,
+  "MissingPeerDeliveries": 0,
+  "MissingSelfEchoes": 0,
+  "DuplicateACKs": 0,
+  "DuplicatePushes": 0,
+  "SenderSequenceRegressions": 0,
+  "ConversationIDRegressions": 8261,
+  "ACKMilliseconds": {
+    "count": 40000,
+    "P50": 1924.743568,
+    "P95": 3700.647359,
+    "P99": 3992.056007,
+    "Max": 4396.454859
+  },
+  "PeerMilliseconds": {
+    "count": 40000,
+    "P50": 1927.520419,
+    "P95": 3704.450986,
+    "P99": 3994.358227,
+    "Max": 4397.174336
+  },
+  "OrderExamples": [
+    "receiver=0 previous_max_id=25881 arrived_id=25815 sender=0 seq=11",
+    "receiver=0 previous_max_id=26148 arrived_id=26147 sender=1 seq=11",
+    "receiver=0 previous_max_id=27847 arrived_id=27827 sender=1 seq=21",
+    "receiver=0 previous_max_id=28187 arrived_id=28154 sender=1 seq=23",
+    "receiver=0 previous_max_id=28371 arrived_id=28294 sender=0 seq=24",
+    "receiver=1 previous_max_id=25703 arrived_id=25631 sender=1 seq=8",
+    "receiver=1 previous_max_id=26148 arrived_id=26147 sender=1 seq=11",
+    "receiver=1 previous_max_id=27847 arrived_id=27827 sender=1 seq=21",
+    "receiver=1 previous_max_id=28187 arrived_id=28154 sender=1 seq=23",
+    "receiver=1 previous_max_id=30424 arrived_id=30309 sender=1 seq=33"
+  ]
+}

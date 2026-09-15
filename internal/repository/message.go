@@ -10,9 +10,11 @@ import (
 type MessageRepository interface {
 	CreateMessage(ctx context.Context, message *model.Message) error
 	GetMessageByID(ctx context.Context, id uint) (*model.Message, error)
+	GetMessageByConversationAndSeq(ctx context.Context, conversationID uint, seq uint64) (*model.Message, error)
 	GetMessageBySenderAndClientMsgID(ctx context.Context, senderID uint, clientMsgID string) (*model.Message, error)
 	ListMessagesByConversationID(ctx context.Context, conversationID, beforeMessageID uint, limit int) ([]model.Message, error)
 	ListMessagesAfterMessageID(ctx context.Context, conversationID, afterMessageID uint, limit int) ([]model.Message, error)
+	ListMessagesAfterSeq(ctx context.Context, conversationID uint, afterSeq uint64, limit int) ([]model.Message, error)
 	GetLastMessageByConversationID(ctx context.Context, conversationID uint) (*model.Message, error)
 	GetLastMessagesByConversationIDs(ctx context.Context, conversationIDs []uint) ([]model.Message, error)
 	CountUnreadMessages(ctx context.Context, conversationID, userID, lastReadMessageID uint) (int64, error)
@@ -29,6 +31,17 @@ func (r *Repository) CreateMessage(ctx context.Context, message *model.Message) 
 func (r *Repository) GetMessageByID(ctx context.Context, id uint) (*model.Message, error) {
 	var message model.Message
 	if err := r.db.WithContext(ctx).First(&message, id).Error; err != nil {
+		return nil, err
+	}
+	return &message, nil
+}
+
+// GetMessageByConversationAndSeq 查询会话中指定连续序号的消息。
+func (r *Repository) GetMessageByConversationAndSeq(ctx context.Context, conversationID uint, seq uint64) (*model.Message, error) {
+	var message model.Message
+	if err := r.db.WithContext(ctx).
+		Where("conversation_id = ? AND seq = ?", conversationID, seq).
+		First(&message).Error; err != nil {
 		return nil, err
 	}
 	return &message, nil
@@ -69,6 +82,21 @@ func (r *Repository) ListMessagesAfterMessageID(ctx context.Context, conversatio
 	query := r.db.WithContext(ctx).
 		Where("conversation_id = ? AND id > ?", conversationID, afterMessageID).
 		Order("id ASC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	if err := query.Find(&messages).Error; err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
+// ListMessagesAfterSeq 按会话 seq 升序补齐连续游标之后的消息。
+func (r *Repository) ListMessagesAfterSeq(ctx context.Context, conversationID uint, afterSeq uint64, limit int) ([]model.Message, error) {
+	var messages []model.Message
+	query := r.db.WithContext(ctx).
+		Where("conversation_id = ? AND seq > ?", conversationID, afterSeq).
+		Order("seq ASC")
 	if limit > 0 {
 		query = query.Limit(limit)
 	}

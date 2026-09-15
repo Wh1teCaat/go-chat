@@ -146,7 +146,7 @@ func AuthRequired() gin.HandlerFunc {
 			return
 		}
 
-		claims, err := auth.ValidateToken(tokenString)
+		claims, err := auth.ValidateToken(tokenString, auth.TokenTypeAccess)
 		if err != nil {
 			response.Error(c, apperrors.WithCause(apperrors.ErrInvalidToken, "invalid token", err))
 			c.Abort()

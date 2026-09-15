@@ -12,16 +12,19 @@ import (
 )
 
 const (
-	defaultAccessTokenTTL  = 15 * time.Minute
-	defaultRefreshTokenTTL = 7 * 24 * time.Hour
-	tokenTypeAccess        = "access"
-	tokenTypeRefresh       = "refresh"
+	defaultAccessTokenTTL            = 15 * time.Minute
+	defaultRefreshTokenTTL           = 7 * 24 * time.Hour
+	TokenTypeAccess        TokenType = "access"
+	TokenTypeRefresh       TokenType = "refresh"
 )
 
+// TokenType 区分接口访问令牌和刷新令牌。
+type TokenType string
+
 type Claims struct {
-	UserID    uint   `json:"user_id"`
-	Username  string `json:"username,omitempty"`
-	TokenType string `json:"token_type"`
+	UserID    uint      `json:"user_id"`
+	Username  string    `json:"username,omitempty"`
+	TokenType TokenType `json:"token_type"`
 	jwt.RegisteredClaims
 }
 
@@ -42,17 +45,17 @@ func GenerateRefreshToken(userID uint, username string) (token string, expireAt 
 	if err != nil {
 		return "", 0, "", err
 	}
-	token, expireAt, err = buildToken(userID, username, tokenTypeRefresh, defaultRefreshTokenTTL, jti)
+	token, expireAt, err = buildToken(userID, username, TokenTypeRefresh, defaultRefreshTokenTTL, jti)
 	return token, expireAt, jti, err
 }
 
 // GenerateAccessToken 为用户签发短期访问令牌并返回过期时间。
 func GenerateAccessToken(userID uint, username string) (string, int64, error) {
-	return buildToken(userID, username, tokenTypeAccess, defaultAccessTokenTTL, "")
+	return buildToken(userID, username, TokenTypeAccess, defaultAccessTokenTTL, "")
 }
 
 // buildToken 使用指定类型、有效期和标识构造并签名 JWT。
-func buildToken(userID uint, username, tokenType string, ttl time.Duration, jti string) (string, int64, error) {
+func buildToken(userID uint, username string, tokenType TokenType, ttl time.Duration, jti string) (string, int64, error) {
 	if len(jwtSecret) == 0 {
 		return "", 0, errors.New("jwt secret not initialized")
 	}
@@ -84,18 +87,11 @@ func newTokenID() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-// ValidateToken 校验访问令牌并返回其中的声明。
-func ValidateToken(tokenString string) (*Claims, error) {
-	return validateToken(tokenString, tokenTypeAccess)
-}
-
-// ValidateRefreshToken 校验刷新令牌并返回其中的声明。
-func ValidateRefreshToken(tokenString string) (*Claims, error) {
-	return validateToken(tokenString, tokenTypeRefresh)
-}
-
-// validateToken 解析 JWT，并校验签名、有效期及令牌类型。
-func validateToken(tokenString, expectedType string) (*Claims, error) {
+// ValidateToken 校验 JWT 的签名、有效期和指定用途，拒绝未知的预期类型。
+func ValidateToken(tokenString string, expectedType TokenType) (*Claims, error) {
+	if expectedType != TokenTypeAccess && expectedType != TokenTypeRefresh {
+		return nil, errors.New("unsupported expected token type")
+	}
 	if len(jwtSecret) == 0 {
 		return nil, errors.New("jwt secret not initialized")
 	}

@@ -82,6 +82,7 @@ func run(deps appDeps) {
 	logger.Info("Database initialized successfully")
 
 	service.Init(repository.NewRepository(db))
+	service.InitMessageAsyncCommit(cfg.Database.MessageAsyncCommit)
 	// 当前使用本地文件系统保存上传文件；后续换 OSS/MinIO 只需要替换 storage 实现。
 	service.InitFileStorage(storage.NewLocalStorage("uploads", "/uploads"))
 	// 后台清理随停机取消，避免关闭过程中还有 goroutine 在写数据库。
@@ -95,21 +96,23 @@ func run(deps appDeps) {
 		deps.exit(1)
 		return
 	}
+	defer redisClient.Close()
 	logger.Info("Redis initialized successfully")
+
 	redisStore := cache.NewRedisStore(redisClient)
 	service.InitCacheStore(redisStore)
 	service.InitTokenStore(redisStore)
-	defer redisClient.Close()
 	presenceStore := initPresenceStore(redisClient)
 	service.InitPresenceStore(presenceStore)
 	controller.InitPresenceStore(presenceStore)
 	limiter := initRateLimiter(redisClient)
 	controller.InitHealthCheckers(buildDBPing(db), buildRedisPing(redisClient))
 
-	// 多实例部署时 WS 推送经 Redis Pub/Sub 广播；没有 Redis 就保持进程内直投（单实例）。
-	var bus wsbus.Bus = wsbus.NewLocalBus(controller.WSHub)
+	// 所有本地和跨实例消息先进入会话分区 dispatcher，再由每连接 writeLoop 并发写出。
+	// 多实例部署时总线经 Redis Pub/Sub 广播；没有 Redis 则保持进程内直投。
+	var bus wsbus.Bus = wsbus.NewLocalBus(controller.OrderedDeliverySender())
 	if redisClient != nil {
-		redisBus, err := wsbus.NewRedisBus(context.Background(), redisClient, controller.WSHub)
+		redisBus, err := wsbus.NewRedisBus(context.Background(), redisClient, controller.OrderedDeliverySender())
 		if err != nil {
 			logger.Error("Failed to initialize ws bus", logger.Any("error", err))
 			deps.exit(1)
@@ -118,6 +121,7 @@ func run(deps appDeps) {
 		bus = redisBus
 	}
 	controller.InitWSBus(bus)
+	controller.InitOrderedMessageProcessing(cleanupCtx)
 
 	server := buildServer(cfg, deps.newRouter(cfg, limiter))
 	serveErr := make(chan error, 1)

@@ -1,0 +1,64 @@
+prepared 100 accounts; connecting websockets
+load: 100 connections, 50 cross-instance pairs, 2000.0 offered messages/s
+{
+  "Run": "18d3e82e8761502c",
+  "Config": {
+    "URLs": "http://127.0.0.1:18081,http://127.0.0.1:18082",
+    "Pairs": 50,
+    "Messages": 1200,
+    "Rate": 20,
+    "Drain": 5000000000,
+    "Output": "loadtest/results/docker-20260910/100-connections-60s.json"
+  },
+  "StartedUTC": "2026-09-10T08:26:03Z",
+  "Connections": 100,
+  "Upstreams": {
+    "http://127.0.0.1:18081": 50,
+    "http://127.0.0.1:18082": 50
+  },
+  "CrossInstancePairs": 50,
+  "SendSeconds": 59.95204331,
+  "ObservationSeconds": 64.95266581,
+  "SuccessfulWritesPerSecond": 2001.5998350465563,
+  "DeliveriesPerSecond": 1847.4992289157901,
+  "Planned": 120000,
+  "SuccessfulWrites": 120000,
+  "WriteErrors": 0,
+  "BusinessErrors": 0,
+  "UnexpectedReadErrors": 0,
+  "ACKs": 120000,
+  "MissingACKs": 0,
+  "PeerDeliveries": 120000,
+  "MissingPeerDeliveries": 0,
+  "MissingSelfEchoes": 0,
+  "DuplicateACKs": 0,
+  "DuplicatePushes": 0,
+  "SenderSequenceRegressions": 0,
+  "ConversationIDRegressions": 21697,
+  "ACKMilliseconds": {
+    "count": 120000,
+    "P50": 26.392488,
+    "P95": 48.060496,
+    "P99": 90.708392,
+    "Max": 242.370639
+  },
+  "PeerMilliseconds": {
+    "count": 120000,
+    "P50": 28.664837,
+    "P95": 51.377044,
+    "P99": 94.277738,
+    "Max": 249.581226
+  },
+  "OrderExamples": [
+    "receiver=0 previous_max_id=144876 arrived_id=144867 sender=0 seq=1",
+    "receiver=0 previous_max_id=145420 arrived_id=145401 sender=1 seq=6",
+    "receiver=0 previous_max_id=145668 arrived_id=145661 sender=0 seq=9",
+    "receiver=0 previous_max_id=146218 arrived_id=146201 sender=0 seq=14",
+    "receiver=0 previous_max_id=146571 arrived_id=146548 sender=0 seq=18",
+    "receiver=1 previous_max_id=145185 arrived_id=145174 sender=1 seq=4",
+    "receiver=1 previous_max_id=145420 arrived_id=145401 sender=1 seq=6",
+    "receiver=1 previous_max_id=145668 arrived_id=145661 sender=0 seq=9",
+    "receiver=1 previous_max_id=146218 arrived_id=146201 sender=0 seq=14",
+    "receiver=1 previous_max_id=146484 arrived_id=146483 sender=1 seq=17"
+  ]
+}

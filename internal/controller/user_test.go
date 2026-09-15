@@ -88,7 +88,7 @@ func TestLoginReturnsAccessToken(t *testing.T) {
 		t.Fatal("expected refresh_expire_at in response")
 	}
 
-	claims, err := auth.ValidateToken(response.Data.Token)
+	claims, err := auth.ValidateToken(response.Data.Token, auth.TokenTypeAccess)
 	if err != nil {
 		t.Fatalf("ValidateToken returned error: %v", err)
 	}
@@ -96,9 +96,9 @@ func TestLoginReturnsAccessToken(t *testing.T) {
 		t.Fatalf("unexpected claims: %+v", claims)
 	}
 
-	refreshClaims, err := auth.ValidateRefreshToken(response.Data.RefreshToken)
+	refreshClaims, err := auth.ValidateToken(response.Data.RefreshToken, auth.TokenTypeRefresh)
 	if err != nil {
-		t.Fatalf("ValidateRefreshToken returned error: %v", err)
+		t.Fatalf("ValidateToken refresh returned error: %v", err)
 	}
 	if refreshClaims.UserID != user.ID || refreshClaims.Username != user.Email {
 		t.Fatalf("unexpected refresh claims: %+v", refreshClaims)
@@ -149,7 +149,7 @@ func TestRefreshTokenRotatesAndRevokesOldToken(t *testing.T) {
 	if response.Code != 0 || response.Data.Token == "" || response.Data.RefreshToken == "" {
 		t.Fatalf("unexpected refresh response: %+v", response)
 	}
-	claims, err := auth.ValidateToken(response.Data.Token)
+	claims, err := auth.ValidateToken(response.Data.Token, auth.TokenTypeAccess)
 	if err != nil {
 		t.Fatalf("ValidateToken returned error: %v", err)
 	}

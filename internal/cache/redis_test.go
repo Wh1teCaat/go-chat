@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func TestHashReplacementAndString(t *testing.T) {
+func TestHashUpdatePreservesFieldsAndString(t *testing.T) {
 	ctx := context.Background()
 	client := testutil.Redis(t)
 	s := NewRedisStore(client)
@@ -21,7 +21,7 @@ func TestHashReplacementAndString(t *testing.T) {
 		t.Fatal(err)
 	}
 	fields, ok, err := s.GetHash(ctx, "profile")
-	if err != nil || !ok || len(fields) != 1 || fields["id"] != "42" {
+	if err != nil || !ok || len(fields) != 2 || fields["id"] != "42" || fields["obsolete"] != "x" {
 		t.Fatalf("%v %v %v", fields, ok, err)
 	}
 	if ttl := client.PTTL(ctx, "profile").Val(); ttl <= 0 || ttl > time.Minute {

@@ -4,11 +4,20 @@ import (
 	"context"
 
 	"chat_proj/internal/model"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type ConversationRepository interface {
 	CreateConversation(ctx context.Context, conversation *model.Conversation) error
 	GetConversationByID(ctx context.Context, id uint) (*model.Conversation, error)
+	GetConversationForUpdate(ctx context.Context, id uint) (*model.Conversation, error)
+	ReserveNextConversationSeq(ctx context.Context, id uint) (seq, publishedSeq uint64, err error)
+	AdvanceConversationPublishedSeq(ctx context.Context, id uint, previous, next uint64) error
+	AdvanceConversationPublishedSeqAtLeast(ctx context.Context, id uint, next uint64) error
+	ListConversationIDsWithUnpublishedMessages(ctx context.Context, limit int) ([]uint, error)
+	HasUnpublishedMessages(ctx context.Context, id uint) (bool, error)
 	GetPrivateConversationBetweenUsers(ctx context.Context, user1ID, user2ID uint) (*model.Conversation, error)
 	GetConversationByGroupID(ctx context.Context, groupID uint) (*model.Conversation, error)
 	ListConversationsByUserID(ctx context.Context, userID uint) ([]model.Conversation, error)
@@ -36,6 +45,87 @@ func (r *Repository) GetConversationByID(ctx context.Context, id uint) (*model.C
 		return nil, err
 	}
 	return &conversation, nil
+}
+
+// GetConversationForUpdate 锁定会话行，供消息序号分配和有序发布协调使用。
+// PostgreSQL 会在事务结束前保持行锁；SQLite 测试环境会忽略该锁语义。
+func (r *Repository) GetConversationForUpdate(ctx context.Context, id uint) (*model.Conversation, error) {
+	var conversation model.Conversation
+	if err := r.db.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		First(&conversation, id).Error; err != nil {
+		return nil, err
+	}
+	return &conversation, nil
+}
+
+// ReserveNextConversationSeq 在当前事务内为会话保留下一个连续序号。
+// UPDATE 同时充当该会话的跨实例串行化点；不同会话不会互相等待。
+func (r *Repository) ReserveNextConversationSeq(ctx context.Context, id uint) (seq, publishedSeq uint64, err error) {
+	conversation, err := r.GetConversationForUpdate(ctx, id)
+	if err != nil {
+		return 0, 0, err
+	}
+	if err := r.db.WithContext(ctx).
+		Model(&model.Conversation{}).
+		Where("id = ?", id).
+		UpdateColumn("last_seq", r.db.Raw("last_seq + 1")).Error; err != nil {
+		return 0, 0, err
+	}
+	return conversation.LastSeq + 1, conversation.LastPublishedSeq, nil
+}
+
+// AdvanceConversationPublishedSeq 推进已经成功交给总线的连续水位。
+// previous 条件避免意外跳过尚未发布的序号。
+func (r *Repository) AdvanceConversationPublishedSeq(ctx context.Context, id uint, previous, next uint64) error {
+	result := r.db.WithContext(ctx).
+		Model(&model.Conversation{}).
+		Where("id = ? AND last_published_seq = ?", id, previous).
+		UpdateColumn("last_published_seq", next)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+// AdvanceConversationPublishedSeqAtLeast 确认 Redis 序号门已经连续发布到 next。
+// next 由 Lua 脚本的实际返回值提供，所以允许一次跨越同批被释放的多个序号。
+func (r *Repository) AdvanceConversationPublishedSeqAtLeast(ctx context.Context, id uint, next uint64) error {
+	return r.db.WithContext(ctx).
+		Model(&model.Conversation{}).
+		Where("id = ? AND last_published_seq < ?", id, next).
+		UpdateColumn("last_published_seq", r.db.Raw("CASE WHEN last_published_seq < ? THEN ? ELSE last_published_seq END", next, next)).Error
+}
+
+// ListConversationIDsWithUnpublishedMessages 供后台恢复任务扫描提交后未成功发布的消息。
+func (r *Repository) ListConversationIDsWithUnpublishedMessages(ctx context.Context, limit int) ([]uint, error) {
+	var ids []uint
+	query := r.db.WithContext(ctx).
+		Model(&model.Conversation{}).
+		Where("last_seq > last_published_seq").
+		Order("id ASC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	if err := query.Pluck("id", &ids).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// HasUnpublishedMessages 在 publisher 完成一轮 drain 后检查是否有新提交消息落在本轮锁之后。
+func (r *Repository) HasUnpublishedMessages(ctx context.Context, id uint) (bool, error) {
+	var count int64
+	if err := r.db.WithContext(ctx).
+		Model(&model.Conversation{}).
+		Where("id = ? AND last_seq > last_published_seq", id).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // GetPrivateConversationBetweenUsers 查询两个用户之间的单聊会话。

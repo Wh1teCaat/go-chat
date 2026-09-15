@@ -59,7 +59,7 @@ func generateTokenPair(userID uint, username string) (*TokenPair, string, error)
 // RefreshTokenPair 校验并轮换 refresh token：旧 jti 立即吊销，返回新的 token 对。
 // jti 不在 allowlist 时可能是已登出、已轮换（重放）或服务端重启丢失，一律要求重新登录。
 func (s *tokenService) RefreshTokenPair(ctx context.Context, refreshToken string) (*TokenPair, error) {
-	claims, err := auth.ValidateRefreshToken(refreshToken)
+	claims, err := auth.ValidateToken(refreshToken, auth.TokenTypeRefresh)
 	if err != nil {
 		return nil, apperrors.WithCause(apperrors.ErrInvalidToken, "invalid refresh token", err)
 	}
@@ -85,7 +85,7 @@ func (s *tokenService) RefreshTokenPair(ctx context.Context, refreshToken string
 
 // RevokeRefreshToken 吊销 refresh token（登出）。token 无效或已吊销时视为已登出，不返回错误。
 func (s *tokenService) RevokeRefreshToken(ctx context.Context, refreshToken string) error {
-	claims, err := auth.ValidateRefreshToken(refreshToken)
+	claims, err := auth.ValidateToken(refreshToken, auth.TokenTypeRefresh)
 	if err != nil || claims.ID == "" {
 		return nil
 	}

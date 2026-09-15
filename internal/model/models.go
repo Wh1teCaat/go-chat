@@ -65,11 +65,13 @@ type GroupJoinRequest struct {
 }
 
 type Conversation struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	Type      uint8     `gorm:"not null" json:"type"` // 0: private, 1: group
-	GroupID   *uint     `gorm:"index" json:"group_id,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID               uint      `gorm:"primaryKey" json:"id"`
+	Type             uint8     `gorm:"not null" json:"type"` // 0: private, 1: group
+	GroupID          *uint     `gorm:"index" json:"group_id,omitempty"`
+	LastSeq          uint64    `gorm:"not null;default:0" json:"-"`
+	LastPublishedSeq uint64    `gorm:"not null;default:0" json:"-"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 type ConversationMember struct {
@@ -83,7 +85,9 @@ type ConversationMember struct {
 type Message struct {
 	ID             uint `gorm:"primaryKey" json:"id"`
 	ConversationID uint `gorm:"index;not null" json:"conversation_id"`
-	SenderID       uint `gorm:"index;uniqueIndex:idx_messages_sender_client_msg;not null" json:"sender_id"`
+	// Seq 是会话内严格递增的权威顺序；全局 ID 只用于唯一标识和兼容旧接口。
+	Seq      uint64 `gorm:"not null;default:0" json:"seq"`
+	SenderID uint   `gorm:"index;uniqueIndex:idx_messages_sender_client_msg;not null" json:"sender_id"`
 	// ClientMsgID 为 NULL 时不参与唯一约束；同一发送者的同一 clientMsgID 只会落库一次，
 	// 客户端 ACK 超时重发时服务端据此去重。
 	ClientMsgID *string   `gorm:"size:64;uniqueIndex:idx_messages_sender_client_msg" json:"client_msg_id,omitempty"`

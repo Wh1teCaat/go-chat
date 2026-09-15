@@ -16,6 +16,12 @@ func TestBuildDSNUsesConfiguredDatabase(t *testing.T) {
 	}
 }
 
+func TestDatabaseConfigDefaultsToSynchronousMessageCommit(t *testing.T) {
+	if testDBConfig().MessageAsyncCommit {
+		t.Fatal("test database config must keep synchronous message commit by default")
+	}
+}
+
 func TestInitialMigrationUsesGooseDirectivesAndCoreIndexes(t *testing.T) {
 	content, err := os.ReadFile("../../migrations/001_init.sql")
 	if err != nil {
@@ -49,6 +55,48 @@ func TestUploadSessionSHA256MigrationUsesGooseDirectives(t *testing.T) {
 		"ALTER TABLE upload_sessions ADD COLUMN IF NOT EXISTS sha256 varchar(64) NOT NULL DEFAULT ''",
 		"-- +goose Down",
 		"ALTER TABLE upload_sessions DROP COLUMN IF EXISTS sha256",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("expected migration to contain %q", want)
+		}
+	}
+}
+
+func TestConversationSequenceMigrationUsesGooseDirectivesAndUniqueOrder(t *testing.T) {
+	content, err := os.ReadFile("../../migrations/005_add_conversation_message_sequence.sql")
+	if err != nil {
+		t.Fatalf("failed to read migration: %v", err)
+	}
+	sql := string(content)
+
+	for _, want := range []string{
+		"-- +goose Up",
+		"last_seq bigint NOT NULL DEFAULT 0",
+		"last_published_seq bigint NOT NULL DEFAULT 0",
+		"messages ADD COLUMN IF NOT EXISTS seq bigint NOT NULL DEFAULT 0",
+		"PARTITION BY conversation_id ORDER BY id",
+		"UNIQUE (conversation_id, seq)",
+		"-- +goose Down",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("expected migration to contain %q", want)
+		}
+	}
+}
+
+func TestConversationMemberLookupIndexMigrationUsesGooseDirectives(t *testing.T) {
+	content, err := os.ReadFile("../../migrations/006_add_conversation_members_user_lookup_index.sql")
+	if err != nil {
+		t.Fatalf("failed to read migration: %v", err)
+	}
+	sql := string(content)
+
+	for _, want := range []string{
+		"-- +goose Up",
+		"idx_conversation_members_user_conversation",
+		"(user_id, conversation_id)",
+		"-- +goose Down",
+		"DROP INDEX IF EXISTS idx_conversation_members_user_conversation",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("expected migration to contain %q", want)

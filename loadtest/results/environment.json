@@ -1,0 +1,18 @@
+{
+  "date": "2026-09-10T08:14:13Z",
+  "cpu_count": 16,
+  "uname": [
+    "Linux",
+    "AUSA",
+    "6.18.33.2-microsoft-standard-WSL2",
+    "#1 SMP PREEMPT_DYNAMIC Thu Jun 18 21:54:43 UTC 2026",
+    "x86_64"
+  ],
+  "cpu": "model name\t: Intel(R) Core(TM) i7-10875H CPU @ 2.30GHz",
+  "memory": [
+    "MemTotal:       16264856 kB",
+    "MemFree:        12233136 kB",
+    "MemAvailable:   14018844 kB"
+  ],
+  "topology": "single WSL host; 2 real backend processes, PostgreSQL 16, Redis 7; direct backend URLs; no nginx; 30 DB connections/backend; rate_limit=false; log=info; no retries or reconnects"
+}

@@ -33,12 +33,12 @@ func TestRedisStoreRealConnection(t *testing.T) {
 	value := map[string]string{"name": "ok", "n": "1"}
 
 	if err := store.SetHash(context.Background(), key, value, 30*time.Second); err != nil {
-		t.Fatalf("SetJSON returned error: %v", err)
+		t.Fatalf("SetHash returned error: %v", err)
 	}
 
 	got, ok, err := store.GetHash(context.Background(), key)
 	if err != nil {
-		t.Fatalf("GetJSON returned error: %v", err)
+		t.Fatalf("GetHash returned error: %v", err)
 	}
 	if !ok || got["name"] != value["name"] || got["n"] != value["n"] {
 		t.Fatalf("unexpected cached value: ok=%v got=%+v", ok, got)
@@ -49,7 +49,7 @@ func TestRedisStoreRealConnection(t *testing.T) {
 	}
 	_, ok, err = store.GetHash(context.Background(), key)
 	if err != nil {
-		t.Fatalf("GetJSON after delete returned error: %v", err)
+		t.Fatalf("GetHash after delete returned error: %v", err)
 	}
 	if ok {
 		t.Fatal("expected cache miss after delete")

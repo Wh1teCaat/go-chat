@@ -1,0 +1,62 @@
+{
+  "Run": "18d3e7891b2c49d3",
+  "Config": {
+    "URLs": "http://127.0.0.1:18081,http://127.0.0.1:18082",
+    "Pairs": 10,
+    "Messages": 200,
+    "Rate": 20,
+    "Drain": 5000000000,
+    "Output": "/home/y2/project/go-chat/loadtest/results/20-connections.json"
+  },
+  "StartedUTC": "2026-09-10T08:14:13Z",
+  "Connections": 20,
+  "Upstreams": {
+    "http://127.0.0.1:18081": 10,
+    "http://127.0.0.1:18082": 10
+  },
+  "CrossInstancePairs": 10,
+  "SendSeconds": 9.951132235,
+  "ObservationSeconds": 14.954213392,
+  "SuccessfulWritesPerSecond": 401.9643097426893,
+  "DeliveriesPerSecond": 267.48314305450964,
+  "Planned": 4000,
+  "SuccessfulWrites": 4000,
+  "WriteErrors": 0,
+  "BusinessErrors": 0,
+  "UnexpectedReadErrors": 0,
+  "ACKs": 4000,
+  "MissingACKs": 0,
+  "PeerDeliveries": 4000,
+  "MissingPeerDeliveries": 0,
+  "MissingSelfEchoes": 0,
+  "DuplicateACKs": 0,
+  "DuplicatePushes": 0,
+  "SenderSequenceRegressions": 0,
+  "ConversationIDRegressions": 1263,
+  "ACKMilliseconds": {
+    "count": 4000,
+    "P50": 10.682839,
+    "P95": 34.322388,
+    "P99": 44.977811,
+    "Max": 65.270133
+  },
+  "PeerMilliseconds": {
+    "count": 4000,
+    "P50": 12.224903,
+    "P95": 38.658211,
+    "P99": 47.737321,
+    "Max": 72.954063
+  },
+  "OrderExamples": [
+    "receiver=0 previous_max_id=40 arrived_id=24 sender=0 seq=2",
+    "receiver=0 previous_max_id=97 arrived_id=86 sender=0 seq=5",
+    "receiver=0 previous_max_id=135 arrived_id=126 sender=0 seq=7",
+    "receiver=0 previous_max_id=273 arrived_id=264 sender=0 seq=14",
+    "receiver=0 previous_max_id=364 arrived_id=363 sender=0 seq=19",
+    "receiver=1 previous_max_id=40 arrived_id=24 sender=0 seq=2",
+    "receiver=1 previous_max_id=65 arrived_id=62 sender=1 seq=4",
+    "receiver=1 previous_max_id=180 arrived_id=179 sender=1 seq=9",
+    "receiver=1 previous_max_id=214 arrived_id=203 sender=1 seq=11",
+    "receiver=1 previous_max_id=234 arrived_id=227 sender=1 seq=12"
+  ]
+}

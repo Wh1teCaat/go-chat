@@ -15,7 +15,7 @@ import {
   buildWsProtocols,
   decodeTokenUserID,
   isOwnMessage,
-  latestServerMessageID,
+	latestContinuousMessageSeq,
   mergeIncomingMessage,
   messageMatchesTarget,
   messagePreview,
@@ -57,6 +57,7 @@ const state = {
 const MULTIPART_UPLOAD_THRESHOLD = 2 * 1024 * 1024;
 const MULTIPART_CHUNK_SIZE = 2 * 1024 * 1024;
 const MESSAGE_ACK_TIMEOUT_MS = 10000;
+const MESSAGE_MAX_RETRIES = 3;
 
 const els = {
   authView: document.querySelector("#authView"),
@@ -510,30 +511,38 @@ function scheduleWsReconnect() {
 }
 
 // 重连成功后的增量同步：会话列表全量刷新（拿最新未读数），
-// 当前会话按本地最大服务端消息 ID 增量补拉，避免整页重新加载。
+// 当前会话按本地最后连续会话 seq 增量补拉，避免把乱序到达的最大值当成游标跳过缺口。
 async function resyncAfterReconnect() {
   refreshSessions();
   if (!state.currentTarget) {
     return;
   }
-  const afterID = latestServerMessageID(state.messages);
-  if (!afterID) {
+  const afterSeq = latestContinuousMessageSeq(state.messages);
+  if (!afterSeq) {
     await loadMessages();
     return;
   }
-  const data = await apiPost("/v1/message/list", {
-    targetType: state.currentTarget.type,
-    targetID: state.currentTarget.id,
-    afterMessageID: afterID,
-    limit: 100,
-  });
-  const missed = unwrapArray(data);
-  if (!missed.length) {
-    return;
-  }
+  let cursor = afterSeq;
   let messages = state.messages;
-  for (const msg of missed) {
-    messages = mergeIncomingMessage(messages, msg).messages;
+  for (;;) {
+    const data = await apiPost("/v1/message/list", {
+      targetType: state.currentTarget.type,
+      targetID: state.currentTarget.id,
+      afterSeq: cursor,
+      limit: 100,
+    });
+    const missed = unwrapArray(data);
+    if (!missed.length) {
+      break;
+    }
+    for (const msg of missed) {
+      messages = mergeIncomingMessage(messages, msg).messages;
+    }
+    const next = latestContinuousMessageSeq(messages);
+    if (next <= cursor || missed.length < 100) {
+      break;
+    }
+    cursor = next;
   }
   state.messages = sortMessagesAscending(messages);
   renderMessages();
@@ -584,7 +593,7 @@ function sendMessageContent(content) {
   state.messages.push(createLocalMessage(payload, state.currentUserID));
   state.messages = sortMessagesAscending(state.messages);
   renderMessages();
-  trackPendingMessage(payload.clientMsgID);
+  trackPendingMessage(payload);
   try {
     state.ws.send(JSON.stringify(payload));
   } catch (error) {
@@ -634,6 +643,10 @@ function handleWsPayload(payload) {
     return;
   }
   const msg = payload.data;
+  // 自己的消息推送也证明已落库，即使 ACK 丢失也无需继续重试。
+  if (isOwnMessage(msg, state.currentUserID)) {
+    clearPendingMessageTimer(msg.clientMsgID);
+  }
   // 推送消息带接收端视角的 targetType/targetID；不属于当前打开的会话就只刷新会话列表，
   // 未读数和最后一条消息由会话接口给出，消息本体等切换会话时再拉。
   if (!messageMatchesTarget(msg, state.currentTarget)) {
@@ -647,10 +660,22 @@ function handleWsPayload(payload) {
   refreshSessions();
 }
 
-function trackPendingMessage(clientMsgID) {
+function trackPendingMessage(payload, retries = 0) {
+  const { clientMsgID } = payload;
   clearPendingMessageTimer(clientMsgID);
   const timer = window.setTimeout(() => {
-    markMessageFailed(clientMsgID);
+    if (retries >= MESSAGE_MAX_RETRIES || !state.ws || state.ws.readyState !== WebSocket.OPEN) {
+      markMessageFailed(clientMsgID);
+      return;
+    }
+    // 重试沿用原始消息及 clientMsgID，让服务端返回原消息 ACK。
+    try {
+      state.ws.send(JSON.stringify(payload));
+      trackPendingMessage(payload, retries + 1);
+    } catch (error) {
+      markMessageFailed(clientMsgID);
+      log("WS SEND ERROR", error.message);
+    }
   }, MESSAGE_ACK_TIMEOUT_MS);
   state.pendingMessageTimers.set(clientMsgID, timer);
 }

@@ -224,7 +224,7 @@ sequenceDiagram
     A->>A: status=read
 ```
 
-如果服务端返回 `type=error` 且带 `clientMsgID`，或前端等待 ACK 超时，前端会把对应本地消息标记为 `failed`。
+前端每次等待 ACK 10 秒，超时后沿用原消息和 `clientMsgID` 自动重试，最多重试 3 次（加上首次发送共 4 次）。最后一次仍超时则标记为 `failed`；收到 ACK 或发送者自己的消息推送后停止重试。服务端返回带 `clientMsgID` 的 `type=error`、发送异常或连接断开时，停止重试并标记失败。
 
 ## 测试
 
@@ -241,3 +241,9 @@ CHAT_REDIS_INTEGRATION=1 GOCACHE=/tmp/go-build GOMODCACHE=/tmp/go-mod go test ./
 ```
 
 缓存迁移：资料与刷新令牌键使用 `v2:` 前缀，旧 JSON 缓存自然过期；升级后旧刷新令牌失效，需要重新登录。缓存测试使用 miniredis 协议服务执行 RedisStore 与 Lua，不提供生产内存缓存实现。
+
+## 多实例压测
+
+[压测工具与运行方法](loadtest/README.md)支持双向并发私聊，统计 ACK/端到端延迟、窗口内未到达、重复、发送者序号乱序和会话消息 ID 回退。[实测报告](loadtest/RESULTS.md)记录独立双后端环境的阶梯负载结果。
+
+[Docker 双实例 Redis 实测](loadtest/DOCKER_RESULTS.md)：包含 20–1000 连接阶梯负载、两档约 60 秒持续负载及容器 CPU/内存采样。

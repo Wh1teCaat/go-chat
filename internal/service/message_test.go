@@ -62,6 +62,9 @@ func TestSendConversationMessageDeduplicatesByClientMsgID(t *testing.T) {
 	if second.Message.ID != first.Message.ID {
 		t.Fatalf("duplicate send should return original message id %d, got %d", first.Message.ID, second.Message.ID)
 	}
+	if first.Message.Seq != 1 || second.Message.Seq != 1 {
+		t.Fatalf("duplicate must retain the original sequence, got first=%d second=%d", first.Message.Seq, second.Message.Seq)
+	}
 
 	var count int64
 	if err := db.Model(&model.Message{}).Count(&count).Error; err != nil {
@@ -69,6 +72,83 @@ func TestSendConversationMessageDeduplicatesByClientMsgID(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("expected exactly 1 stored message, got %d", count)
+	}
+}
+
+func TestConversationMessageSequenceAndPublishWatermark(t *testing.T) {
+	db := setupTestDB(t)
+	initRepo(db)
+
+	sender := createTestUser(t, db, "sequence-sender@test.com")
+	receiver := createTestUser(t, db, "sequence-receiver@test.com")
+	conversation := setupPrivateConversation(t, db, sender.ID, receiver.ID)
+
+	for _, content := range []string{"one", "two"} {
+		if _, err := MessageService.SendConversationMessage(context.Background(), sender.ID, dto.SendMessageInput{
+			Type:       dto.WSMessageTypeMessage,
+			TargetType: dto.MessageTargetTypePrivate,
+			TargetID:   receiver.ID,
+			Content:    content,
+		}); err != nil {
+			t.Fatalf("send %q: %v", content, err)
+		}
+	}
+
+	var stored []model.Message
+	if err := db.Where("conversation_id = ?", conversation.ID).Order("seq ASC").Find(&stored).Error; err != nil {
+		t.Fatalf("load messages: %v", err)
+	}
+	if len(stored) != 2 || stored[0].Seq != 1 || stored[1].Seq != 2 {
+		t.Fatalf("unexpected stored sequence: %+v", stored)
+	}
+
+	var published []dto.OrderedMessageEvent
+	err := MessageService.PublishPendingConversationMessages(context.Background(), conversation.ID, func(_ context.Context, event dto.OrderedMessageEvent) error {
+		published = append(published, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("publish pending messages: %v", err)
+	}
+	if len(published) != 2 || published[0].Seq != 1 || published[1].Seq != 2 {
+		t.Fatalf("unexpected publish sequence: %+v", published)
+	}
+	if len(published[0].RecipientIDs) != 2 || published[0].TargetID != receiver.ID {
+		t.Fatalf("unexpected publish event: %+v", published[0])
+	}
+
+	var refreshed model.Conversation
+	if err := db.First(&refreshed, conversation.ID).Error; err != nil {
+		t.Fatalf("load conversation: %v", err)
+	}
+	if refreshed.LastSeq != 2 || refreshed.LastPublishedSeq != 2 {
+		t.Fatalf("unexpected watermarks: last=%d published=%d", refreshed.LastSeq, refreshed.LastPublishedSeq)
+	}
+}
+
+func TestListMessagesAfterSeqUsesConversationOrder(t *testing.T) {
+	db := setupTestDB(t)
+	initRepo(db)
+
+	sender := createTestUser(t, db, "after-seq-sender@test.com")
+	receiver := createTestUser(t, db, "after-seq-receiver@test.com")
+	setupPrivateConversation(t, db, sender.ID, receiver.ID)
+	for _, content := range []string{"one", "two", "three"} {
+		if _, err := MessageService.SendConversationMessage(context.Background(), sender.ID, dto.SendMessageInput{
+			Type: dto.WSMessageTypeMessage, TargetType: dto.MessageTargetTypePrivate, TargetID: receiver.ID, Content: content,
+		}); err != nil {
+			t.Fatalf("send %q: %v", content, err)
+		}
+	}
+
+	messages, err := MessageService.ListMessages(context.Background(), receiver.ID, dto.ListMessagesInput{
+		TargetType: dto.MessageTargetTypePrivate, TargetID: sender.ID, AfterSeq: 1,
+	})
+	if err != nil {
+		t.Fatalf("list after seq: %v", err)
+	}
+	if len(messages) != 2 || messages[0].Seq != 2 || messages[1].Seq != 3 {
+		t.Fatalf("unexpected messages: %+v", messages)
 	}
 }
 

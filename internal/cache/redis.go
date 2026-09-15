@@ -55,28 +55,20 @@ func (s *RedisStore) GetHash(ctx context.Context, key string) (map[string]string
 	return fields, len(fields) > 0 && err == nil, err
 }
 
-var replaceHashScript = redis.NewScript(`
-redis.call("DEL",KEYS[1])
-for i=2,#ARGV,2 do
- redis.call("HSET",KEYS[1],ARGV[i],ARGV[i+1])
-end
-redis.call("PEXPIRE",KEYS[1],ARGV[1])
-return 1
-`)
-
-// SetHash 原子替换有限大小的字段快照，并设置 TTL。
+// SetHash 使用原生 HSET 更新指定字段，并在事务中刷新整个键的 TTL；保留其他字段。
 func (s *RedisStore) SetHash(ctx context.Context, key string, fields map[string]string, ttl time.Duration) error {
 	if err := s.ready(); err != nil {
 		return err
 	}
-	if ttl.Milliseconds() <= 0 || len(fields) == 0 || len(fields) > 128 {
-		return errors.New("positive TTL and 1..128 hash fields required")
+	if ttl.Milliseconds() <= 0 || len(fields) == 0 {
+		return errors.New("positive TTL and nonempty hash required")
 	}
-	args := []any{ttl.Milliseconds()}
-	for k, v := range fields {
-		args = append(args, k, v)
-	}
-	return replaceHashScript.Run(ctx, s.client, []string{key}, args...).Err()
+	_, err := s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.HSet(ctx, key, fields)
+		pipe.PExpire(ctx, key, ttl)
+		return nil
+	})
+	return err
 }
 
 // Delete 删除指定键。
@@ -91,8 +83,14 @@ func (s *RedisStore) Delete(ctx context.Context, keys ...string) error {
 }
 
 var rotateStringScript = redis.NewScript(`
-if redis.call("GET",KEYS[1]) ~= ARGV[1] then return 0 end
-if not redis.call("SET",KEYS[2],ARGV[2],"PX",ARGV[3],"NX") then return -1 end
+if redis.call("GET",KEYS[1]) ~= ARGV[1] then 
+	return 0 
+end
+
+if not redis.call("SET",KEYS[2],ARGV[2],"PX",ARGV[3],"NX") then 
+	return -1 
+end
+
 redis.call("DEL",KEYS[1])
 return 1
 `)

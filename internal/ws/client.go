@@ -66,9 +66,11 @@ func (c *Client) Send(message any) {
 	case c.send <- message:
 		c.mu.Unlock()
 	default:
-		// send 缓冲满说明该连接消费服务端推送太慢，关闭它避免慢连接持续占用内存。
+		// 先停止接收消息，确保每个慢连接最多启动一个异步清理任务。
+		// 下线登记可能等待存储响应，不能让它阻塞 Hub 给其他连接入队。
+		c.closed = true
 		c.mu.Unlock()
-		c.Close()
+		go c.Close()
 	}
 }
 
