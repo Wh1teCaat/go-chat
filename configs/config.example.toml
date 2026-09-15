@@ -39,6 +39,8 @@ brokers = ["127.0.0.1:9092"]
 topic = "chat-messages"
 group_id = "go-chat-message-writers"
 client_id = "go-chat"
+# 每个实例上并行处理 Kafka 分区的 worker 数；同一分区仍严格串行。
+consumer_workers = 4
 
 [rate_limit]
 enabled = true

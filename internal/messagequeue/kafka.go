@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ import (
 
 const commandVersion = 1
 const maxPartitionBatch = 64
+const defaultConsumerWorkers = 4
 
 // MessageCommand is the durable hand-off between websocket ingress and the
 // partition consumer that assigns the authoritative database sequence.
@@ -45,6 +47,7 @@ type KafkaQueue struct {
 	client  *kgo.Client
 	topic   string
 	handler Handler
+	workers int
 	cancel  context.CancelFunc
 	done    chan struct{}
 	once    sync.Once
@@ -80,6 +83,7 @@ func NewKafkaQueue(parent context.Context, cfg config.KafkaConfig, handler Handl
 		client:  client,
 		topic:   cfg.Topic,
 		handler: handler,
+		workers: normalizedWorkerCount(cfg.ConsumerWorkers),
 		cancel:  cancel,
 		done:    make(chan struct{}),
 	}
@@ -151,40 +155,105 @@ func (q *KafkaQueue) consume(ctx context.Context) {
 	}
 }
 
+// processRecords assigns each partition to one bounded worker. A worker handles
+// the records of its partition in offset order; different partitions can write
+// PostgreSQL and publish Redis events concurrently. The returned offset for a
+// partition never advances beyond its last successfully handled raw record.
 func (q *KafkaQueue) processRecords(ctx context.Context, records []*kgo.Record) []*kgo.Record {
-	lastByPartition := make(map[int32]*kgo.Record)
+	byPartition := make(map[int32][]*kgo.Record)
+	for _, record := range records {
+		byPartition[record.Partition] = append(byPartition[record.Partition], record)
+	}
+
+	partitions := make([]int32, 0, len(byPartition))
+	for partition := range byPartition {
+		partitions = append(partitions, partition)
+	}
+	sort.Slice(partitions, func(i, j int) bool { return partitions[i] < partitions[j] })
+
+	type partitionResult struct {
+		partition int32
+		last      *kgo.Record
+	}
+	jobs := make(chan int32)
+	results := make(chan partitionResult, len(partitions))
+	workers := normalizedWorkerCount(q.workers)
+	if workers > len(partitions) {
+		workers = len(partitions)
+	}
+
+	var workerGroup sync.WaitGroup
+	workerGroup.Add(workers)
+	for range workers {
+		go func() {
+			defer workerGroup.Done()
+			for partition := range jobs {
+				results <- partitionResult{
+					partition: partition,
+					last:      q.processPartition(ctx, byPartition[partition]),
+				}
+			}
+		}()
+	}
+	for _, partition := range partitions {
+		jobs <- partition
+	}
+	close(jobs)
+	workerGroup.Wait()
+	close(results)
+
+	lastByPartition := make(map[int32]*kgo.Record, len(partitions))
+	for result := range results {
+		if result.last != nil {
+			lastByPartition[result.partition] = result.last
+		}
+	}
+	return recordsFromPartitionMap(lastByPartition)
+}
+
+// processPartition is deliberately serial: Kafka keying ensures all commands
+// for one conversation land here, so invoking the handler out of offset order
+// would violate the conversation sequence guarantee.
+func (q *KafkaQueue) processPartition(ctx context.Context, records []*kgo.Record) *kgo.Record {
+	var last *kgo.Record
 	for start := 0; start < len(records); {
-		commands := make([]MessageCommand, 0, maxPartitionBatch)
-		batchRecords := make([]*kgo.Record, 0, maxPartitionBatch)
-		for start < len(records) && len(commands) < maxPartitionBatch {
-			record := records[start]
-			start++
+		end := start + maxPartitionBatch
+		if end > len(records) {
+			end = len(records)
+		}
+		rawBatch := records[start:end]
+		start = end
+
+		commands := make([]MessageCommand, 0, len(rawBatch))
+		for _, record := range rawBatch {
 			var command MessageCommand
 			if err := json.Unmarshal(record.Value, &command); err != nil || command.Version != commandVersion || command.ConversationID == 0 {
 				logger.Error("KafkaMessageInvalid",
 					logger.Any("partition", record.Partition),
 					logger.Any("offset", record.Offset),
 					logger.String("error", fmt.Sprint(err)))
-				lastByPartition[record.Partition] = record // poison records cannot block the partition forever.
 				continue
 			}
 			commands = append(commands, command)
-			batchRecords = append(batchRecords, record)
 		}
 		if len(commands) == 0 {
+			// Poison records cannot block this partition forever.
+			last = rawBatch[len(rawBatch)-1]
 			continue
 		}
+
 		for {
 			if err := q.handler(ctx, commands); err == nil {
-				for _, record := range batchRecords {
-					lastByPartition[record.Partition] = record
-				}
+				// The handler covered every valid command before rawBatch's final
+				// record, so committing this offset also skips any poison record
+				// that appeared between them.
+				last = rawBatch[len(rawBatch)-1]
 				break
 			} else {
 				logger.Warn("KafkaMessageHandleRetry",
 					logger.Uint("conversation_id", commands[0].ConversationID),
-					logger.Any("partition", batchRecords[0].Partition),
-					logger.Any("offset", batchRecords[0].Offset),
+					logger.Any("partition", rawBatch[0].Partition),
+					logger.Any("offset", rawBatch[0].Offset),
 					logger.Any("batch_size", len(commands)),
 					logger.String("error", err.Error()))
 			}
@@ -192,12 +261,19 @@ func (q *KafkaQueue) processRecords(ctx context.Context, records []*kgo.Record) 
 			select {
 			case <-ctx.Done():
 				timer.Stop()
-				return recordsFromPartitionMap(lastByPartition)
+				return last
 			case <-timer.C:
 			}
 		}
 	}
-	return recordsFromPartitionMap(lastByPartition)
+	return last
+}
+
+func normalizedWorkerCount(workers int) int {
+	if workers <= 0 {
+		return defaultConsumerWorkers
+	}
+	return workers
 }
 
 func recordsFromPartitionMap(lastByPartition map[int32]*kgo.Record) []*kgo.Record {
