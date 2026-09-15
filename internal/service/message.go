@@ -50,40 +50,29 @@ type MessageReadResult struct {
 	ReceiverIDs []uint
 }
 
+type QueuedConversationMessage struct {
+	ConversationID uint
+	SenderID       uint
+	Input          dto.SendMessageInput
+}
+
+type QueuedConversationMessageResult struct {
+	Message *ConversationMessageResult
+	Err     error
+}
+
 // OrderedMessagePublisher 把一条已提交的规范化消息事件交给实时总线。
 // 调用方应只在 publish 成功后允许发布水位推进。
 type OrderedMessagePublisher func(ctx context.Context, event dto.OrderedMessageEvent) error
 
 // SendConversationMessage 校验会话成员和消息内容，持久化消息并返回接收者信息。
 func (s *messageService) SendConversationMessage(ctx context.Context, senderID uint, input dto.SendMessageInput) (*ConversationMessageResult, error) {
-	content := strings.TrimSpace(input.Content)
-	if content == "" {
-		return nil, apperrors.WithMessage(apperrors.ErrInvalidInput, "message content is required")
-	}
-	clientMsgID := strings.TrimSpace(input.ClientMsgID)
-	if len(clientMsgID) > 64 {
-		return nil, apperrors.WithMessage(apperrors.ErrInvalidInput, "clientMsgID too long")
-	}
-
-	conversation, err := s.resolveConversation(ctx, senderID, input.TargetType, input.TargetID)
+	conversation, content, clientMsgID, err := s.prepareConversationMessage(ctx, senderID, input)
 	if err != nil {
 		return nil, err
 	}
 
 	fileID, hasFile := fileIDFromMessageContent(content)
-	if hasFile {
-		file, err := repo.GetFileByID(ctx, fileID)
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, apperrors.WithMessage(apperrors.ErrNotFound, "file not found")
-			}
-			return nil, dbOperationError(err)
-		}
-		if file.UserID != senderID {
-			return nil, apperrors.ErrPermissionDenied
-		}
-	}
-
 	message := &model.Message{
 		ConversationID: conversation.ID,
 		SenderID:       senderID,
@@ -144,6 +133,127 @@ func (s *messageService) SendConversationMessage(ctx context.Context, senderID u
 		TargetType:     input.TargetType,
 		TargetID:       input.TargetID,
 	}, nil
+}
+
+// ResolveConversationIDForMessage performs the validation required before a
+// command is keyed into Kafka. The accepted command keeps this authorization
+// decision while it waits for persistence, matching the ACK acceptance point.
+func (s *messageService) ResolveConversationIDForMessage(ctx context.Context, senderID uint, input dto.SendMessageInput) (uint, error) {
+	conversation, _, _, err := s.prepareConversationMessage(ctx, senderID, input)
+	if err != nil {
+		return 0, err
+	}
+	if strings.TrimSpace(input.ClientMsgID) == "" {
+		return 0, apperrors.WithMessage(apperrors.ErrInvalidInput, "clientMsgID is required when Kafka is enabled")
+	}
+	return conversation.ID, nil
+}
+
+// StoreQueuedConversationMessages writes one Kafka partition micro-batch in a
+// single transaction. Commands were validated before enqueue. If the batch
+// encounters a duplicate or another record-specific failure, it is rolled back
+// and retried through the existing per-message idempotent path.
+func (s *messageService) StoreQueuedConversationMessages(ctx context.Context, queued []QueuedConversationMessage) ([]QueuedConversationMessageResult, error) {
+	if len(queued) == 0 {
+		return nil, nil
+	}
+	results := make([]QueuedConversationMessageResult, len(queued))
+	err := repo.WithTransaction(func(tx *repository.Repository) error {
+		if s.asyncCommit.Load() {
+			if err := tx.EnableAsyncCommitForTransaction(ctx); err != nil {
+				return err
+			}
+		}
+		for i, item := range queued {
+			content := strings.TrimSpace(item.Input.Content)
+			clientMsgID := strings.TrimSpace(item.Input.ClientMsgID)
+			if item.ConversationID == 0 || item.SenderID == 0 || content == "" || clientMsgID == "" || len(clientMsgID) > 64 {
+				return apperrors.WithMessage(apperrors.ErrInvalidInput, "invalid queued message")
+			}
+			seq, err := tx.ReserveNextConversationSeqOnly(ctx, item.ConversationID)
+			if err != nil {
+				return err
+			}
+			message := &model.Message{
+				ConversationID: item.ConversationID,
+				Seq:            seq,
+				SenderID:       item.SenderID,
+				ClientMsgID:    &clientMsgID,
+				Content:        content,
+			}
+			if err := tx.CreateMessage(ctx, message); err != nil {
+				return err
+			}
+			if fileID, hasFile := fileIDFromMessageContent(content); hasFile {
+				if err := tx.BindFileToConversation(ctx, fileID, item.SenderID, item.ConversationID); err != nil {
+					return err
+				}
+			}
+			results[i].Message = &ConversationMessageResult{
+				Message:        toMessageOutput(*message),
+				ConversationID: item.ConversationID,
+				ClientMsgID:    clientMsgID,
+				TargetType:     item.Input.TargetType,
+				TargetID:       item.Input.TargetID,
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return s.storeQueuedConversationMessagesIndividually(ctx, queued), nil
+	}
+
+	for i, item := range queued {
+		if item.Input.TargetType == dto.MessageTargetTypePrivate {
+			results[i].Message.ReceiverIDs = []uint{item.Input.TargetID}
+			continue
+		}
+		receivers, err := s.conversationReceiverIDs(ctx, item.ConversationID, item.SenderID)
+		if err != nil {
+			return nil, err
+		}
+		results[i].Message.ReceiverIDs = receivers
+	}
+	return results, nil
+}
+
+func (s *messageService) storeQueuedConversationMessagesIndividually(ctx context.Context, queued []QueuedConversationMessage) []QueuedConversationMessageResult {
+	results := make([]QueuedConversationMessageResult, len(queued))
+	for i, item := range queued {
+		results[i].Message, results[i].Err = s.SendConversationMessage(ctx, item.SenderID, item.Input)
+	}
+	return results
+}
+
+func (s *messageService) prepareConversationMessage(ctx context.Context, senderID uint, input dto.SendMessageInput) (*model.Conversation, string, string, error) {
+	content := strings.TrimSpace(input.Content)
+	if content == "" {
+		return nil, "", "", apperrors.WithMessage(apperrors.ErrInvalidInput, "message content is required")
+	}
+	clientMsgID := strings.TrimSpace(input.ClientMsgID)
+	if len(clientMsgID) > 64 {
+		return nil, "", "", apperrors.WithMessage(apperrors.ErrInvalidInput, "clientMsgID too long")
+	}
+
+	conversation, err := s.resolveConversation(ctx, senderID, input.TargetType, input.TargetID)
+	if err != nil {
+		return nil, "", "", err
+	}
+
+	fileID, hasFile := fileIDFromMessageContent(content)
+	if hasFile {
+		file, err := repo.GetFileByID(ctx, fileID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, "", "", apperrors.WithMessage(apperrors.ErrNotFound, "file not found")
+			}
+			return nil, "", "", dbOperationError(err)
+		}
+		if file.UserID != senderID {
+			return nil, "", "", apperrors.ErrPermissionDenied
+		}
+	}
+	return conversation, content, clientMsgID, nil
 }
 
 // duplicateMessageResult 校验幂等消息内容并构造已有消息的发送结果。

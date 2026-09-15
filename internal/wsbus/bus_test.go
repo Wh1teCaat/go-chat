@@ -63,6 +63,21 @@ func TestLocalBusDeliversDirectly(t *testing.T) {
 	}
 }
 
+func TestLocalBusDeliversBatchInOrder(t *testing.T) {
+	sender := &recordingSender{}
+	bus := NewLocalBus(sender)
+	if err := bus.PublishBatch(context.Background(), []Delivery{
+		{UserIDs: []uint{1}, Payload: "first"},
+		{UserIDs: []uint{2}, Payload: "second"},
+	}); err != nil {
+		t.Fatalf("PublishBatch returned error: %v", err)
+	}
+	calls := sender.snapshot()
+	if len(calls) != 2 || calls[0].message != "first" || calls[1].message != "second" {
+		t.Fatalf("unexpected ordered batch: %#v", calls)
+	}
+}
+
 // TestRedisBusBroadcastsAcrossInstances 模拟两个实例：各自有独立的 Hub（Sender）和总线，
 // 实例 1 发布的消息必须能通过 Redis 送达实例 2 的本地投递端。
 func TestRedisBusBroadcastsAcrossInstances(t *testing.T) {

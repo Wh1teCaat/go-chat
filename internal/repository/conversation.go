@@ -14,6 +14,7 @@ type ConversationRepository interface {
 	CreateConversation(ctx context.Context, conversation *model.Conversation) error
 	GetConversationByID(ctx context.Context, id uint) (*model.Conversation, error)
 	GetConversationForUpdate(ctx context.Context, id uint) (*model.Conversation, error)
+	ReserveNextConversationSeqOnly(ctx context.Context, id uint) (uint64, error)
 	ReserveNextConversationSeq(ctx context.Context, id uint) (seq, publishedSeq uint64, err error)
 	AdvanceConversationPublishedSeq(ctx context.Context, id uint, previous, next uint64) error
 	AdvanceConversationPublishedSeqAtLeast(ctx context.Context, id uint, next uint64) error
@@ -64,6 +65,20 @@ func (r *Repository) GetConversationForUpdate(ctx context.Context, id uint) (*mo
 // ReserveNextConversationSeq 在当前事务内为会话保留下一个连续序号。
 // UPDATE 同时充当该会话的跨实例串行化点；不同会话不会互相等待。
 func (r *Repository) ReserveNextConversationSeq(ctx context.Context, id uint) (seq, publishedSeq uint64, err error) {
+	seq, err = r.ReserveNextConversationSeqOnly(ctx, id)
+	if err != nil {
+		return 0, 0, err
+	}
+	publishedSeq, err = r.GetConversationPublishedSeq(ctx, id)
+	if err != nil {
+		return 0, 0, err
+	}
+	return seq, publishedSeq, nil
+}
+
+// ReserveNextConversationSeqOnly is used by Kafka consumers, whose partition
+// order removes the need to read the legacy Redis publication watermark.
+func (r *Repository) ReserveNextConversationSeqOnly(ctx context.Context, id uint) (uint64, error) {
 	var reserved struct {
 		LastSeq uint64
 	}
@@ -71,16 +86,12 @@ func (r *Repository) ReserveNextConversationSeq(ctx context.Context, id uint) (s
 		Raw("UPDATE conversations SET last_seq = last_seq + 1 WHERE id = ? RETURNING last_seq", id).
 		Scan(&reserved)
 	if result.Error != nil {
-		return 0, 0, result.Error
+		return 0, result.Error
 	}
 	if result.RowsAffected != 1 {
-		return 0, 0, gorm.ErrRecordNotFound
+		return 0, gorm.ErrRecordNotFound
 	}
-	publishedSeq, err = r.GetConversationPublishedSeq(ctx, id)
-	if err != nil {
-		return 0, 0, err
-	}
-	return reserved.LastSeq, publishedSeq, nil
+	return reserved.LastSeq, nil
 }
 
 func (r *Repository) GetConversationPublishedSeq(ctx context.Context, id uint) (uint64, error) {

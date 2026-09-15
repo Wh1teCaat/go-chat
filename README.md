@@ -6,8 +6,8 @@
 
 - 后端：Gin + GORM + PostgreSQL，REST 接口处理账号、好友、群组、消息列表和文件上传下载。
 - 认证：JWT access token + refresh token。refresh token 带 jti，服务端用 Redis allowlist 管理（Redis 为必需依赖）；每次刷新轮换并吊销旧 token，重放返回 401；`/v1/user/logout` 吊销 refresh token。WebSocket 通过 `Sec-WebSocket-Protocol` 的 `bearer.<token>` 条目认证，token 不进 URL。前端会在 access token 过期前主动刷新，接口遇到 401 时也会自动刷新后重试。
-- 实时消息：Gorilla WebSocket。客户端发消息后服务端落库并返回 `message_ack`，前端据此展示发送中/已发送/发送失败/已读状态。`clientMsgID` 参与服务端幂等去重（`(sender_id, client_msg_id)` 唯一索引），ACK 丢失重发不会重复落库。消息本体推送给接收方和发送者的全部连接（多标签页/多设备同步），推送带接收端视角的 `targetType`/`targetID`。前端断线后指数退避自动重连，重连成功用 `afterMessageID` 增量补拉断线期间的消息。
-- 多实例：推送经 `internal/wsbus` 总线路由——启用 Redis 时走 Pub/Sub 全局频道广播，每个实例只投递本地在线用户，支持多实例水平扩展；无 Redis 时退化为进程内直投。ACK/错误只对发起连接有意义，始终本地直投。设计取舍见 [docs/design/01-multi-instance-ws.md](docs/design/01-multi-instance-ws.md)。
+- 实时消息：Gorilla WebSocket。默认模式下，客户端发消息后服务端落库并返回 `message_ack`。启用 Kafka 后先返回 `accepted` ACK，消费者批量落库后再推送带权威会话序号的消息。前端据此展示发送中、排队中、已发送、发送失败和已读状态。`clientMsgID` 参与服务端幂等去重（`(sender_id, client_msg_id)` 唯一索引），ACK 丢失重发不会重复落库。前端断线后指数退避自动重连，并用 `afterMessageID` 增量补拉。
+- 多实例：Kafka 以 `conversationID` 作为消息 key，同一会话固定进入同一分区并按序消费；消费端在一个事务中批量分配序号和写 PostgreSQL。推送经 `internal/wsbus` 路由，Redis Pub/Sub 会把一个提交批次合成一次发布，各实例再按数组顺序投递本地连接。Kafka 关闭时继续使用 Redis Lua 序号门和数据库发布水位恢复机制。
 - 缓存：Redis 为必需依赖；资料通过显式字段映射存 Hash，refresh token 用户 ID 存 String，通过 Lua 原子轮换。启动连接失败会退出；运行时资料缓存失败回源数据库，Token 操作失败返回错误。
 - 运维：`GET /health` 健康检查（数据库不可用返回 503）；收到 SIGINT/SIGTERM 后优雅停机（停止监听、等待存量请求、关闭全部 WebSocket 连接）。
 - 文件：默认使用本地存储 `uploads/`；头像可通过 `/uploads/...` 公开访问，聊天附件必须走 `/v1/file/:id/download` 鉴权下载，普通附件支持图片、PDF、Word、TXT 和 ZIP。
@@ -39,6 +39,7 @@ internal/cache/       Redis 客户端、缓存 Store 和缓存 key 定义
 internal/controller/  Gin handler 与 WebSocket handler
 internal/dto/         HTTP/WS 入参和出参结构
 internal/middleware/  鉴权、CORS、请求日志、限流
+internal/messagequeue/ Kafka 消息入口和分区顺序消费
 internal/model/       GORM 数据模型
 internal/ratelimit/   内存/Redis 固定窗口限流
 internal/repository/  数据库访问层
@@ -110,6 +111,7 @@ npm run dev
 
 - `[database] password`：本机 PostgreSQL 密码
 - `[redis] enabled`：必须为 `true`，启动前需要可连接的 Redis
+- `[kafka] enabled`：设为 `true` 后异步接收聊天消息；需先创建配置中的 topic，分区数决定可并行处理的会话数
 - `[log] path`：日志文件路径
 - `[jwt] secret`：部署时必须换成强随机字符串
 

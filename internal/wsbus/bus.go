@@ -23,6 +23,18 @@ type Bus interface {
 	Close() error
 }
 
+// Delivery is one targeted payload inside a batch publish.
+type Delivery struct {
+	UserIDs []uint
+	Payload any
+}
+
+// BatchBus is an optional extension used by queue consumers to amortize one
+// broker round trip across a committed database batch.
+type BatchBus interface {
+	PublishBatch(ctx context.Context, deliveries []Delivery) error
+}
+
 // OrderedBus 是聊天消息的快速有序发布能力。它是 Bus 的可选扩展，普通通知仍使用
 // Publish；调用方在单实例和 Redis 部署下都可以使用同一接口。
 type OrderedBus interface {
@@ -48,6 +60,15 @@ func NewLocalBus(hub Sender) *LocalBus {
 // Publish 通过本机 Hub 将消息推送给指定用户。
 func (b *LocalBus) Publish(_ context.Context, userIDs []uint, payload any) error {
 	b.hub.SendToMany(userIDs, payload)
+	return nil
+}
+
+func (b *LocalBus) PublishBatch(_ context.Context, deliveries []Delivery) error {
+	for _, delivery := range deliveries {
+		if len(delivery.UserIDs) != 0 {
+			b.hub.SendToMany(delivery.UserIDs, delivery.Payload)
+		}
+	}
 	return nil
 }
 
@@ -111,6 +132,10 @@ type busEnvelope struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
+type busBatchEnvelope struct {
+	Deliveries []busEnvelope `json:"deliveries"`
+}
+
 // RedisBus 用 Redis Pub/Sub 做跨实例广播。
 // 发布端不直接投递本地连接：本实例自己的订阅也会收到这条消息，投递路径保持唯一，避免本地双投。
 type RedisBus struct {
@@ -149,6 +174,39 @@ func (b *RedisBus) Publish(ctx context.Context, userIDs []uint, payload any) err
 		b.hub.SendToMany(userIDs, json.RawMessage(raw))
 		// 调用方不能把本地降级视作全局发布成功：保留未发布水位，
 		// 后台协调会重试，其他实例才能收到事件。下游按会话 seq 去重。
+		return err
+	}
+	return nil
+}
+
+// PublishBatch uses one Redis PUBLISH for an ordered list of deliveries. Every
+// subscriber expands the list synchronously, so their order is identical on
+// every application instance.
+func (b *RedisBus) PublishBatch(ctx context.Context, deliveries []Delivery) error {
+	envelopes := make([]busEnvelope, 0, len(deliveries))
+	for _, delivery := range deliveries {
+		if len(delivery.UserIDs) == 0 {
+			continue
+		}
+		raw, err := json.Marshal(delivery.Payload)
+		if err != nil {
+			return err
+		}
+		envelopes = append(envelopes, busEnvelope{UserIDs: delivery.UserIDs, Payload: raw})
+	}
+	if len(envelopes) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(busBatchEnvelope{Deliveries: envelopes})
+	if err != nil {
+		return err
+	}
+	if err := b.client.Publish(ctx, redisChannel, data).Err(); err != nil {
+		logger.Warn("WSBusBatchPublishFailed, fallback to local delivery",
+			logger.String("error", err.Error()))
+		for _, envelope := range envelopes {
+			b.hub.SendToMany(envelope.UserIDs, json.RawMessage(envelope.Payload))
+		}
 		return err
 	}
 	return nil
@@ -208,6 +266,13 @@ func marshalBusEnvelope(userIDs []uint, payload any) (data []byte, raw []byte, e
 func (b *RedisBus) run() {
 	// sub.Channel 内部处理了断线重连；Close 后通道关闭，循环退出。
 	for msg := range b.sub.Channel() {
+		var batch busBatchEnvelope
+		if err := json.Unmarshal([]byte(msg.Payload), &batch); err == nil && len(batch.Deliveries) != 0 {
+			for _, delivery := range batch.Deliveries {
+				b.hub.SendToMany(delivery.UserIDs, json.RawMessage(delivery.Payload))
+			}
+			continue
+		}
 		var envelope busEnvelope
 		if err := json.Unmarshal([]byte(msg.Payload), &envelope); err != nil {
 			logger.Warn("WSBusInvalidEnvelope", logger.String("error", err.Error()))

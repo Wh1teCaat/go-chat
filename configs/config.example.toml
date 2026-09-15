@@ -33,6 +33,13 @@ addr = "127.0.0.1:6379"
 password = ""
 db = 0
 
+[kafka]
+enabled = false
+brokers = ["127.0.0.1:9092"]
+topic = "chat-messages"
+group_id = "go-chat-message-writers"
+client_id = "go-chat"
+
 [rate_limit]
 enabled = true
 requests = 120

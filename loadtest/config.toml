@@ -23,6 +23,13 @@ secret = "isolated-loadtest-secret-do-not-use-in-production"
 [redis]
 enabled = true
 addr = "redis:6379"
+
+[kafka]
+enabled = true
+brokers = ["kafka:9092"]
+topic = "chat-messages"
+group_id = "go-chat-message-writers"
+client_id = "go-chat-loadtest"
 [rate_limit]
 # Setup creates many accounts from one IP. Do not change production rate limits.
 enabled = false

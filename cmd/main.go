@@ -14,6 +14,7 @@ import (
 	"chat_proj/internal/config"
 	"chat_proj/internal/controller"
 	"chat_proj/internal/database"
+	"chat_proj/internal/messagequeue"
 	"chat_proj/internal/presence"
 	"chat_proj/internal/ratelimit"
 	"chat_proj/internal/repository"
@@ -121,7 +122,31 @@ func run(deps appDeps) {
 		bus = redisBus
 	}
 	controller.InitWSBus(bus)
-	controller.InitOrderedMessageProcessing(cleanupCtx)
+
+	var kafkaQueue messagequeue.Queue
+	if cfg.Kafka.Enabled {
+		queue, err := messagequeue.NewKafkaQueue(cleanupCtx, cfg.Kafka, controller.HandleQueuedMessages)
+		if err != nil {
+			logger.Error("Failed to initialize kafka message queue", logger.Any("error", err))
+			deps.exit(1)
+			return
+		}
+		pingCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err = queue.Ping(pingCtx)
+		cancel()
+		if err != nil {
+			_ = queue.Close()
+			logger.Error("Failed to connect to kafka", logger.Any("error", err))
+			deps.exit(1)
+			return
+		}
+		kafkaQueue = queue
+		controller.InitMessageQueue(queue)
+		defer queue.Close()
+		logger.Info("Kafka ordered message queue initialized")
+	} else {
+		controller.InitOrderedMessageProcessing(cleanupCtx)
+	}
 
 	server := buildServer(cfg, deps.newRouter(cfg, limiter))
 	serveErr := make(chan error, 1)
@@ -147,6 +172,11 @@ func run(deps appDeps) {
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
 			logger.Warn("Server shutdown incomplete", logger.Any("error", err))
+		}
+		if kafkaQueue != nil {
+			if err := kafkaQueue.Close(); err != nil {
+				logger.Warn("Kafka message queue close failed", logger.Any("error", err))
+			}
 		}
 		// 先退订总线再关本地连接，避免关闭过程中还往连接里投递跨实例消息。
 		if err := bus.Close(); err != nil {

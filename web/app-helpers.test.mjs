@@ -155,6 +155,15 @@ test("message status helpers track local send lifecycle", () => {
     status: "sending",
   });
 
+  const accepted = applyMessageAck([local], {
+    clientMsgID: "client-1",
+    status: "accepted",
+  });
+  assert.deepEqual(accepted[0], {
+    ...local,
+    status: "queued",
+  });
+
   const acked = applyMessageAck([local], {
     clientMsgID: "client-1",
     messageID: 9,
