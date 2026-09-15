@@ -104,6 +104,26 @@ func TestConversationMemberLookupIndexMigrationUsesGooseDirectives(t *testing.T)
 	}
 }
 
+func TestPublishWatermarkMigrationSeparatesHotRows(t *testing.T) {
+	content, err := os.ReadFile("../../migrations/007_separate_conversation_publish_watermarks.sql")
+	if err != nil {
+		t.Fatalf("failed to read migration: %v", err)
+	}
+	sql := string(content)
+
+	for _, want := range []string{
+		"-- +goose Up",
+		"CREATE TABLE IF NOT EXISTS conversation_publish_watermarks",
+		"last_published_seq bigint NOT NULL DEFAULT 0",
+		"INSERT INTO conversation_publish_watermarks",
+		"-- +goose Down",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("expected migration to contain %q", want)
+		}
+	}
+}
+
 func testDBConfig() config.DatabaseConfig {
 	return config.DatabaseConfig{
 		Host:     "127.0.0.1",

@@ -23,6 +23,8 @@ type messageService struct {
 
 var MessageService = new(messageService)
 
+const orderedPublishRecoveryStaleAfter = 30 * time.Second
+
 // InitMessageAsyncCommit 配置聊天消息事务的持久性策略。默认关闭，保持 PostgreSQL
 // 同步提交；开启后 ACK 不等待 WAL fsync，可降低 Docker/网络盘等慢存储上的尾延迟。
 func InitMessageAsyncCommit(enabled bool) {
@@ -186,6 +188,11 @@ func (s *messageService) PublishPendingConversationMessages(ctx context.Context,
 		if err != nil {
 			return err
 		}
+		publishedSeq, err := tx.GetConversationPublishedSeq(ctx, conversationID)
+		if err != nil {
+			return err
+		}
+		conversation.LastPublishedSeq = publishedSeq
 		members, err := tx.ListConversationMembersByConversationID(ctx, conversationID)
 		if err != nil {
 			return err
@@ -218,7 +225,7 @@ func (s *messageService) PublishPendingConversationMessages(ctx context.Context,
 
 // ListConversationsWithUnpublishedMessages 返回需要后台重试实时发布的会话。
 func (s *messageService) ListConversationsWithUnpublishedMessages(ctx context.Context, limit int) ([]uint, error) {
-	ids, err := repo.ListConversationIDsWithUnpublishedMessages(ctx, limit)
+	ids, err := repo.ListConversationIDsWithUnpublishedMessages(ctx, time.Now().Add(-orderedPublishRecoveryStaleAfter), limit)
 	if err != nil {
 		return nil, dbOperationError(err)
 	}

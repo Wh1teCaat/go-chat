@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -72,6 +73,23 @@ type Conversation struct {
 	LastPublishedSeq uint64    `gorm:"not null;default:0" json:"-"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+// ConversationPublishWatermark is stored separately so message sequence
+// allocation and asynchronous publish confirmation do not contend on one row.
+type ConversationPublishWatermark struct {
+	ConversationID   uint   `gorm:"primaryKey"`
+	LastPublishedSeq uint64 `gorm:"not null;default:0"`
+}
+
+// AfterCreate guarantees a checkpoint for conversations created by either the
+// application repositories or test fixtures.
+func (c *Conversation) AfterCreate(tx *gorm.DB) error {
+	watermark := ConversationPublishWatermark{
+		ConversationID:   c.ID,
+		LastPublishedSeq: c.LastPublishedSeq,
+	}
+	return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&watermark).Error
 }
 
 type ConversationMember struct {

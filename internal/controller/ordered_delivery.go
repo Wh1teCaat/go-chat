@@ -15,6 +15,7 @@ import (
 const orderedDeliveryPartitions = 16
 const orderedDeliveryQueueSize = 1024
 const publishedWatermarkFlushInterval = 100 * time.Millisecond
+const publishedWatermarkFlushWorkers = 4
 
 // orderedMessageDelivery 是节点内的 CSP 投递层。每个 conversationID 固定落入一个
 // goroutine；该 goroutine 是同一会话消息写入本机 Client.send 的唯一入口。
@@ -343,20 +344,49 @@ func (f *orderedPublishedWatermarkFlusher) flush(parent context.Context) {
 	f.pending = make(map[uint]uint64)
 	f.mu.Unlock()
 
-	for conversationID, seq := range confirmed {
-		ctx, cancel := context.WithTimeout(parent, 2*time.Second)
-		err := service.MessageService.MarkConversationMessagesPublished(ctx, conversationID, seq)
-		cancel()
-		if err == nil {
-			continue
-		}
-		logger.Warn("WSOrderedPublishWatermarkDeferred",
-			logger.Uint("conversation_id", conversationID),
-			logger.Any("published_through", seq),
-			logger.String("error", err.Error()))
-		f.Confirm(conversationID, seq)
-		orderedMessagePublisher.Enqueue(conversationID)
+	if len(confirmed) == 0 {
+		return
 	}
+
+	type watermark struct {
+		conversationID uint
+		seq            uint64
+	}
+	jobs := make(chan watermark)
+	workerCount := min(publishedWatermarkFlushWorkers, len(confirmed))
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer workers.Done()
+			for item := range jobs {
+				f.flushOne(parent, item.conversationID, item.seq)
+			}
+		}()
+	}
+	for conversationID, seq := range confirmed {
+		jobs <- watermark{conversationID: conversationID, seq: seq}
+	}
+	close(jobs)
+	workers.Wait()
+}
+
+func (f *orderedPublishedWatermarkFlusher) flushOne(parent context.Context, conversationID uint, seq uint64) {
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
+	err := service.MessageService.MarkConversationMessagesPublished(ctx, conversationID, seq)
+	cancel()
+	if err == nil {
+		return
+	}
+	logger.Warn("WSOrderedPublishWatermarkDeferred",
+		logger.Uint("conversation_id", conversationID),
+		logger.Any("published_through", seq),
+		logger.String("error", err.Error()))
+	// Redis has already released this sequence, so retry only the database
+	// checkpoint. Immediately replaying the conversation here would turn a
+	// transient row-lock timeout into duplicate reads, writes and more locking.
+	// The age-gated periodic recovery remains the crash-safety fallback.
+	f.Confirm(conversationID, seq)
 }
 
 // publishPendingOrderedEvent 是数据库恢复路径。调用者已持有该 conversation 的行锁并

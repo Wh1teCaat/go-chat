@@ -30,6 +30,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		&model.Group{},
 		&model.GroupMember{},
 		&model.Conversation{},
+		&model.ConversationPublishWatermark{},
 		&model.ConversationMember{},
 		&model.Message{},
 		&model.File{},

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 	"testing"
+	"time"
 
 	"chat_proj/internal/dto"
 	"chat_proj/internal/model"
@@ -121,8 +122,47 @@ func TestConversationMessageSequenceAndPublishWatermark(t *testing.T) {
 	if err := db.First(&refreshed, conversation.ID).Error; err != nil {
 		t.Fatalf("load conversation: %v", err)
 	}
-	if refreshed.LastSeq != 2 || refreshed.LastPublishedSeq != 2 {
-		t.Fatalf("unexpected watermarks: last=%d published=%d", refreshed.LastSeq, refreshed.LastPublishedSeq)
+	var watermark model.ConversationPublishWatermark
+	if err := db.First(&watermark, "conversation_id = ?", conversation.ID).Error; err != nil {
+		t.Fatalf("load publish watermark: %v", err)
+	}
+	if refreshed.LastSeq != 2 || watermark.LastPublishedSeq != 2 {
+		t.Fatalf("unexpected watermarks: last=%d published=%d", refreshed.LastSeq, watermark.LastPublishedSeq)
+	}
+}
+
+func TestRecoveryScanOnlyReturnsStaleUnpublishedMessages(t *testing.T) {
+	db := setupTestDB(t)
+	initRepo(db)
+
+	sender := createTestUser(t, db, "recovery-sender@test.com")
+	receiver := createTestUser(t, db, "recovery-receiver@test.com")
+	conversation := setupPrivateConversation(t, db, sender.ID, receiver.ID)
+	result, err := MessageService.SendConversationMessage(context.Background(), sender.ID, dto.SendMessageInput{
+		Type: dto.WSMessageTypeMessage, TargetType: dto.MessageTargetTypePrivate, TargetID: receiver.ID, Content: "pending",
+	})
+	if err != nil {
+		t.Fatalf("send message: %v", err)
+	}
+
+	ids, err := MessageService.ListConversationsWithUnpublishedMessages(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("scan fresh message: %v", err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("fresh unpublished message must not trigger recovery: %v", ids)
+	}
+
+	staleAt := time.Now().Add(-orderedPublishRecoveryStaleAfter - time.Second)
+	if err := db.Model(&model.Message{}).Where("id = ?", result.Message.ID).UpdateColumn("created_at", staleAt).Error; err != nil {
+		t.Fatalf("age pending message: %v", err)
+	}
+	ids, err = MessageService.ListConversationsWithUnpublishedMessages(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("scan stale message: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != conversation.ID {
+		t.Fatalf("expected stale conversation %d, got %v", conversation.ID, ids)
 	}
 }
 

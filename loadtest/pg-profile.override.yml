@@ -1,0 +1,11 @@
+# Only used with loadtest/compose.yml in the isolated profiling stack.
+# It is intentionally separate from the regular load-test topology so normal
+# benchmark runs do not pay the statement-statistics collection cost.
+services:
+  postgres:
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - track_io_timing=on
