@@ -145,6 +145,7 @@ export function createLocalMessage(payload, senderID, createdAt = new Date().toI
 export function applyMessageAck(messages, ack) {
 	const clientMsgID = String(ack?.clientMsgID || "");
 	const acknowledgedSeq = Number(ack?.seq || 0);
+	const accepted = ack?.status === "accepted";
 	if (!clientMsgID) {
 		return messages;
 	}
@@ -154,11 +155,11 @@ export function applyMessageAck(messages, ack) {
 		}
 		return {
 			...message,
-			id: Number(ack.messageID || message.id),
+			...(Number(ack.messageID || 0) > 0 ? { id: Number(ack.messageID) } : {}),
 			...(acknowledgedSeq > 0 ? { seq: acknowledgedSeq } : {}),
 			createdAt: ack.createdAt || message.createdAt,
-			local: false,
-			status: "sent",
+			local: accepted ? message.local : false,
+			status: accepted ? "queued" : "sent",
 		};
 	});
 }

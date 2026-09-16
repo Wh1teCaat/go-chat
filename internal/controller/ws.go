@@ -3,10 +3,12 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
 	"chat_proj/internal/dto"
+	"chat_proj/internal/messagequeue"
 	"chat_proj/internal/service"
 	"chat_proj/internal/ws"
 	"chat_proj/internal/wsbus"
@@ -19,6 +21,12 @@ import (
 )
 
 var WSHub = ws.NewHub()
+
+var queuedMessages messagequeue.Queue
+
+func InitMessageQueue(queue messagequeue.Queue) {
+	queuedMessages = queue
+}
 
 // wsBus 是跨实例消息总线。默认进程内直投（单实例/测试）；
 // 多实例部署时 main 会注入 RedisBus，推送经 Redis Pub/Sub 广播到所有实例。
@@ -111,6 +119,26 @@ func handleWSMessage(ctx context.Context, senderID uint, payload []byte) error {
 		sendWSError(senderID, input.ClientMsgID, apperrors.ErrInvalidInput)
 		return nil
 	}
+	if queuedMessages != nil {
+		conversationID, err := service.MessageService.ResolveConversationIDForMessage(ctx, senderID, input)
+		if err != nil {
+			sendWSError(senderID, input.ClientMsgID, err)
+			return err
+		}
+		if err := queuedMessages.Enqueue(ctx, messagequeue.MessageCommand{
+			ConversationID: conversationID,
+			SenderID:       senderID,
+			Input:          input,
+		}); err != nil {
+			sendWSError(senderID, input.ClientMsgID, err)
+			return err
+		}
+		WSHub.SendTo(senderID, wsEnvelope{
+			Type: dto.WSMessageTypeMessageAck,
+			Data: dto.MessageAckOutput{ClientMsgID: input.ClientMsgID, Status: "accepted"},
+		})
+		return nil
+	}
 
 	result, err := service.MessageService.SendConversationMessage(ctx, senderID, input)
 	if err != nil {
@@ -128,6 +156,7 @@ func handleWSMessage(ctx context.Context, senderID uint, payload []byte) error {
 			MessageID:   result.Message.ID,
 			Seq:         result.Message.Seq,
 			CreatedAt:   result.Message.CreatedAt,
+			Status:      "stored",
 		},
 	})
 	if result.Duplicate {
@@ -153,6 +182,74 @@ func handleWSMessage(ctx context.Context, senderID uint, payload []byte) error {
 		orderedPublishedWatermarks.Confirm(result.ConversationID, publishedThrough)
 	}
 	return nil
+}
+
+// HandleQueuedMessages is called once for a Kafka partition micro-batch. The
+// database commits the batch before any event is published, and Kafka offsets
+// advance only after every resulting message has reached the bus.
+func HandleQueuedMessages(ctx context.Context, commands []messagequeue.MessageCommand) error {
+	queued := make([]service.QueuedConversationMessage, len(commands))
+	for i, command := range commands {
+		queued[i] = service.QueuedConversationMessage{
+			ConversationID: command.ConversationID,
+			SenderID:       command.SenderID,
+			Input:          command.Input,
+		}
+	}
+	stored, err := service.MessageService.StoreQueuedConversationMessages(ctx, queued)
+	if err != nil {
+		return err
+	}
+	deliveries := make([]wsbus.Delivery, 0, len(stored))
+	for i, item := range stored {
+		command := commands[i]
+		if item.Err != nil {
+			if apperrors.HTTPCode(item.Err) >= http.StatusInternalServerError {
+				return item.Err
+			}
+			if err := publishQueuedError(ctx, command.SenderID, command.Input.ClientMsgID, item.Err); err != nil {
+				return err
+			}
+			continue
+		}
+
+		result := item.Message
+		event := orderedEventFromResult(command.SenderID, result)
+		if result.Duplicate {
+			events, loadErr := service.MessageService.LoadOrderedMessageEvents(ctx, result.ConversationID, result.Message.Seq-1, 1)
+			if loadErr != nil {
+				return loadErr
+			}
+			if len(events) != 1 || events[0].Seq != result.Message.Seq {
+				return errors.New("stored kafka message could not be reloaded")
+			}
+			event = events[0]
+		}
+
+		// Kafka has serialized this conversation. The ordinary bus is sufficient;
+		// the Redis Lua sequence gate and publication watermarks are bypassed.
+		raw, err := json.Marshal(wsEnvelope{Type: dto.WSMessageTypeMessage, Data: event})
+		if err != nil {
+			return err
+		}
+		deliveries = append(deliveries, wsbus.Delivery{UserIDs: event.RecipientIDs, Payload: json.RawMessage(raw)})
+	}
+	if batchBus, ok := wsBus.(wsbus.BatchBus); ok {
+		return batchBus.PublishBatch(ctx, deliveries)
+	}
+	for _, delivery := range deliveries {
+		if err := wsBus.Publish(ctx, delivery.UserIDs, delivery.Payload); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func publishQueuedError(ctx context.Context, senderID uint, clientMsgID string, err error) error {
+	return publishEnvelope(ctx, []uint{senderID}, wsEnvelope{
+		Type: dto.WSMessageTypeError,
+		Data: wsErrorData(err, clientMsgID),
+	})
 }
 
 // orderedEventFromResult 在消息提交后就能直接构造总线事件，避免热路径为每条消息重新

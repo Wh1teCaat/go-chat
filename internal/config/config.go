@@ -15,6 +15,7 @@ type Config struct {
 	JWT       JWTConfig       `mapstructure:"jwt"`
 	CORS      CORSConfig      `mapstructure:"cors"`
 	Redis     RedisConfig     `mapstructure:"redis"`
+	Kafka     KafkaConfig     `mapstructure:"kafka"`
 	RateLimit RateLimitConfig `mapstructure:"rate_limit"`
 }
 
@@ -69,6 +70,15 @@ type RedisConfig struct {
 	DB       int    `mapstructure:"db"`
 }
 
+type KafkaConfig struct {
+	Enabled         bool     `mapstructure:"enabled"`
+	Brokers         []string `mapstructure:"brokers"`
+	Topic           string   `mapstructure:"topic"`
+	GroupID         string   `mapstructure:"group_id"`
+	ClientID        string   `mapstructure:"client_id"`
+	ConsumerWorkers int      `mapstructure:"consumer_workers"`
+}
+
 type RateLimitConfig struct {
 	Enabled       bool `mapstructure:"enabled"`
 	Requests      int  `mapstructure:"requests"`
@@ -119,6 +129,12 @@ func Load() (*Config, error) {
 	v.SetDefault("redis.addr", "127.0.0.1:6379")
 	v.SetDefault("redis.password", "")
 	v.SetDefault("redis.db", 0)
+	v.SetDefault("kafka.enabled", false)
+	v.SetDefault("kafka.brokers", []string{"127.0.0.1:9092"})
+	v.SetDefault("kafka.topic", "chat-messages")
+	v.SetDefault("kafka.group_id", "go-chat-message-writers")
+	v.SetDefault("kafka.client_id", "go-chat")
+	v.SetDefault("kafka.consumer_workers", 4)
 	v.SetDefault("rate_limit.enabled", true)
 	v.SetDefault("rate_limit.requests", 120)
 	v.SetDefault("rate_limit.window_seconds", 60)

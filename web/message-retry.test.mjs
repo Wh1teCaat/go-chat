@@ -40,6 +40,14 @@ test("ACK after retry cancels timeout and confirms original message", () => {
   assert.equal(h.state.messages[0].id, 100);
 });
 
+test("Kafka acceptance ACK cancels retry while message remains queued", () => {
+  const h = setup(); h.tick();
+  h.context.handleWsPayload({ type: "message_ack", data: { clientMsgID: "abc", status: "accepted" } });
+  assert.equal(h.timers.size, 0);
+  assert.equal(h.state.messages[0].status, "queued");
+  assert.equal(h.state.messages[0].id, "abc");
+});
+
 test("own message push cancels retry even outside current conversation", () => {
   const h = setup();
   h.context.handleWsPayload({ type: "message", data: { senderID: 1, clientMsgID: "abc", id: 100 } });

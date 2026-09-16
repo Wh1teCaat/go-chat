@@ -31,6 +31,8 @@ type MessageAckOutput struct {
 	MessageID   uint   `json:"messageID"`
 	Seq         uint64 `json:"seq"`
 	CreatedAt   string `json:"createdAt"`
+	// Status=accepted 表示 Kafka 已持久接收；stored 表示 PostgreSQL 已落库。
+	Status string `json:"status,omitempty"`
 }
 
 type MessageReadOutput struct {
@@ -92,8 +94,8 @@ type MessageOutput struct {
 // OrderedMessageEvent 是跨实例总线使用的规范化聊天事件。它不会直接发给浏览器；
 // 节点内 dispatcher 会根据接收用户生成 receiver-view 的 MessageOutput。
 type OrderedMessageEvent struct {
-	ConversationID uint              `json:"conversationID"`
-	Seq            uint64            `json:"seq"`
+	ConversationID uint   `json:"conversationID"`
+	Seq            uint64 `json:"seq"`
 	// PublishBaseSeq 是分配本条 seq 时数据库已确认发布的水位。Redis Lua 首次看到
 	// 该会话时用它确定等待的下一条序号；它不是浏览器协议字段。
 	PublishBaseSeq uint64            `json:"publishBaseSeq"`

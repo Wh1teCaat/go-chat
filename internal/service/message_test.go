@@ -166,6 +166,53 @@ func TestRecoveryScanOnlyReturnsStaleUnpublishedMessages(t *testing.T) {
 	}
 }
 
+func TestStoreQueuedConversationMessagesBatchesAndDeduplicates(t *testing.T) {
+	db := setupTestDB(t)
+	initRepo(db)
+
+	alice := createTestUser(t, db, "kafka-batch-alice@test.com")
+	bob := createTestUser(t, db, "kafka-batch-bob@test.com")
+	conversation := setupPrivateConversation(t, db, alice.ID, bob.ID)
+	queued := []QueuedConversationMessage{
+		{
+			ConversationID: conversation.ID,
+			SenderID:       alice.ID,
+			Input:          dto.SendMessageInput{Type: dto.WSMessageTypeMessage, ClientMsgID: "kafka-1", TargetType: dto.MessageTargetTypePrivate, TargetID: bob.ID, Content: "one"},
+		},
+		{
+			ConversationID: conversation.ID,
+			SenderID:       bob.ID,
+			Input:          dto.SendMessageInput{Type: dto.WSMessageTypeMessage, ClientMsgID: "kafka-2", TargetType: dto.MessageTargetTypePrivate, TargetID: alice.ID, Content: "two"},
+		},
+	}
+
+	stored, err := MessageService.StoreQueuedConversationMessages(context.Background(), queued)
+	if err != nil {
+		t.Fatalf("store batch: %v", err)
+	}
+	if len(stored) != 2 || stored[0].Err != nil || stored[1].Err != nil {
+		t.Fatalf("unexpected batch results: %+v", stored)
+	}
+	if stored[0].Message.Message.Seq != 1 || stored[1].Message.Message.Seq != 2 {
+		t.Fatalf("batch sequences = %d, %d", stored[0].Message.Message.Seq, stored[1].Message.Message.Seq)
+	}
+
+	replayed, err := MessageService.StoreQueuedConversationMessages(context.Background(), queued)
+	if err != nil {
+		t.Fatalf("replay batch: %v", err)
+	}
+	if len(replayed) != 2 || !replayed[0].Message.Duplicate || !replayed[1].Message.Duplicate {
+		t.Fatalf("expected idempotent replay, got %+v", replayed)
+	}
+	var count int64
+	if err := db.Model(&model.Message{}).Where("conversation_id = ?", conversation.ID).Count(&count).Error; err != nil {
+		t.Fatalf("count messages: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("stored message count = %d, want 2", count)
+	}
+}
+
 func TestListMessagesAfterSeqUsesConversationOrder(t *testing.T) {
 	db := setupTestDB(t)
 	initRepo(db)
