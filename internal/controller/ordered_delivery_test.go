@@ -42,7 +42,7 @@ func (h *recordingDeliveryHub) snapshot() []deliveryCall {
 
 func TestOrderedDeliveryBuffersConversationGapBeforeClientQueues(t *testing.T) {
 	hub := &recordingDeliveryHub{}
-	delivery := newOrderedMessageDeliveryWithRecovery(hub, func(context.Context, uint, uint64, int) ([]dto.OrderedMessageEvent, error) {
+	delivery := newOrderedMessageDelivery(hub, func(context.Context, uint, uint64, int) ([]dto.OrderedMessageEvent, error) {
 		return nil, errors.New("not needed by this test")
 	})
 
@@ -100,7 +100,7 @@ func TestOrderedDeliveryBuffersConversationGapBeforeClientQueues(t *testing.T) {
 
 func TestOrderedDeliveryRecoversMissingSequenceWithoutBlockingPartition(t *testing.T) {
 	hub := &recordingDeliveryHub{}
-	delivery := newOrderedMessageDeliveryWithRecovery(hub, func(_ context.Context, conversationID uint, afterSeq uint64, limit int) ([]dto.OrderedMessageEvent, error) {
+	delivery := newOrderedMessageDelivery(hub, func(_ context.Context, conversationID uint, afterSeq uint64, limit int) ([]dto.OrderedMessageEvent, error) {
 		if conversationID != 7 || afterSeq != 1 || limit != 100 {
 			return nil, errors.New("unexpected recovery request")
 		}

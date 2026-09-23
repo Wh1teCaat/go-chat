@@ -184,9 +184,8 @@ func handleWSMessage(ctx context.Context, senderID uint, payload []byte) error {
 	return nil
 }
 
-// HandleQueuedMessages is called once for a Kafka partition micro-batch. The
-// database commits the batch before any event is published, and Kafka offsets
-// advance only after every resulting message has reached the bus.
+// HandleQueuedMessages 会针对每个 Kafka 分区微批次调用一次。数据库会在发布任何事件前
+// 提交该批次，并且只有每条生成的消息都已到达总线后，Kafka 偏移量才会前进。
 func HandleQueuedMessages(ctx context.Context, commands []messagequeue.MessageCommand) error {
 	queued := make([]service.QueuedConversationMessage, len(commands))
 	for i, command := range commands {
@@ -226,8 +225,7 @@ func HandleQueuedMessages(ctx context.Context, commands []messagequeue.MessageCo
 			event = events[0]
 		}
 
-		// Kafka has serialized this conversation. The ordinary bus is sufficient;
-		// the Redis Lua sequence gate and publication watermarks are bypassed.
+		// Kafka 已将此会话串行化。普通总线已足够；会绕过 Redis Lua 序列门和发布水位。
 		raw, err := json.Marshal(wsEnvelope{Type: dto.WSMessageTypeMessage, Data: event})
 		if err != nil {
 			return err

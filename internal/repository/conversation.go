@@ -76,8 +76,8 @@ func (r *Repository) ReserveNextConversationSeq(ctx context.Context, id uint) (s
 	return seq, publishedSeq, nil
 }
 
-// ReserveNextConversationSeqOnly is used by Kafka consumers, whose partition
-// order removes the need to read the legacy Redis publication watermark.
+// ReserveNextConversationSeqOnly 供 Kafka 消费者使用；分区内的处理顺序已得到保证，
+// 因此无需读取旧的 Redis 发布水位。
 func (r *Repository) ReserveNextConversationSeqOnly(ctx context.Context, id uint) (uint64, error) {
 	var reserved struct {
 		LastSeq uint64

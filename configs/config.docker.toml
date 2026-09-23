@@ -34,7 +34,7 @@ password = ""
 db = 0
 
 [kafka]
-enabled = false
+enabled = true
 brokers = ["kafka:9092"]
 topic = "chat-messages"
 group_id = "go-chat-message-writers"

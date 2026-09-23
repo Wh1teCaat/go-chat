@@ -46,17 +46,47 @@ type orderedDeliveryHub interface {
 	SendToMany(userIDs []uint, message any)
 }
 
-func newOrderedMessageDelivery(hub orderedDeliveryHub) *orderedMessageDelivery {
-	return newOrderedMessageDeliveryWithRecovery(hub, service.MessageService.LoadOrderedMessageEvents)
+// orderedMessagePublisher 从持久化发布水位取出消息并协调 Redis 发布。单实例内通过
+// 固定分区减少 goroutine 和锁竞争；跨实例顺序由 PublishPendingConversationMessages 的
+// conversations 行锁保证。
+type orderedMessagePublisherType struct {
+	partitions []chan uint
+	once       sync.Once
+	mu         sync.Mutex
+	queued     map[uint]struct{}
 }
 
-func newOrderedMessageDeliveryWithRecovery(hub orderedDeliveryHub, recover orderedMessageRecovery) *orderedMessageDelivery {
+// orderedPublishedWatermarkFlusher 将 Redis 已连续放行的水位合并后异步写回数据库。
+// 正常路径每条消息都必须经过 Redis Lua，但不需要再同步等待一次 PostgreSQL UPDATE。
+// 进程在这段短窗口崩溃时，恢复任务会从较旧水位重发少量事件；dispatcher 按 seq 去重。
+type orderedPublishedWatermarkFlusher struct {
+	once    sync.Once
+	mu      sync.Mutex
+	pending map[uint]uint64
+}
+
+var orderedDelivery = newOrderedMessageDelivery(WSHub, service.MessageService.LoadOrderedMessageEvents)
+var orderedMessagePublisher = newOrderedMessagePublisher()
+var orderedPublishedWatermarks = newOrderedPublishedWatermarkFlusher()
+
+func newOrderedMessageDelivery(hub orderedDeliveryHub, recover orderedMessageRecovery) *orderedMessageDelivery {
 	d := &orderedMessageDelivery{hub: hub, recover: recover, partitions: make([]chan orderedDeliveryInput, orderedDeliveryPartitions)}
 	for i := range d.partitions {
 		d.partitions[i] = make(chan orderedDeliveryInput, orderedDeliveryQueueSize)
 		go d.runPartition(d.partitions[i])
 	}
 	return d
+}
+
+// InitOrderedMessageProcessing 由 main 在 service 与 wsBus 都就绪后调用。
+func InitOrderedMessageProcessing(ctx context.Context) {
+	orderedMessagePublisher.Start(ctx)
+	orderedPublishedWatermarks.Start(ctx)
+}
+
+// OrderedDeliverySender 供 LocalBus 和 RedisBus 使用，保证两者先通过会话分区 dispatcher。
+func OrderedDeliverySender() wsbus.Sender {
+	return orderedDelivery
 }
 
 // SendToMany 先识别规范化聊天事件；其它事件（ACK 以外的通知、已读回执等）沿用直接投递。
@@ -135,6 +165,7 @@ func (d *orderedMessageDelivery) accept(current *orderedConversationState, event
 	}
 	current.pending[event.Seq] = event
 	for {
+		// 只要有连续的 seq，就立即投递；否则等待数据库恢复。
 		next, ok := current.pending[current.next]
 		if !ok {
 			return
@@ -185,16 +216,6 @@ func (d *orderedMessageDelivery) deliver(event dto.OrderedMessageEvent) {
 		}
 		d.hub.SendTo(userID, wsEnvelope{Type: dto.WSMessageTypeMessage, Data: message})
 	}
-}
-
-// orderedMessagePublisher 从持久化发布水位取出消息并协调 Redis 发布。单实例内通过
-// 固定分区减少 goroutine 和锁竞争；跨实例顺序由 PublishPendingConversationMessages 的
-// conversations 行锁保证。
-type orderedMessagePublisherType struct {
-	partitions []chan uint
-	once       sync.Once
-	mu         sync.Mutex
-	queued     map[uint]struct{}
 }
 
 func newOrderedMessagePublisher() *orderedMessagePublisherType {
@@ -291,15 +312,6 @@ func (p *orderedMessagePublisherType) recover(ctx context.Context) {
 	}
 }
 
-// orderedPublishedWatermarkFlusher 将 Redis 已连续放行的水位合并后异步写回数据库。
-// 正常路径每条消息都必须经过 Redis Lua，但不需要再同步等待一次 PostgreSQL UPDATE。
-// 进程在这段短窗口崩溃时，恢复任务会从较旧水位重发少量事件；dispatcher 按 seq 去重。
-type orderedPublishedWatermarkFlusher struct {
-	once    sync.Once
-	mu      sync.Mutex
-	pending map[uint]uint64
-}
-
 func newOrderedPublishedWatermarkFlusher() *orderedPublishedWatermarkFlusher {
 	return &orderedPublishedWatermarkFlusher{pending: make(map[uint]uint64)}
 }
@@ -310,8 +322,8 @@ func (f *orderedPublishedWatermarkFlusher) Start(ctx context.Context) {
 	})
 }
 
-// Confirm records the largest confirmed contiguous seq for one conversation. It only mutates a
-// small in-memory map in the request goroutine; actual DB work is batched by run.
+// Confirm 记录一个会话已确认的最大连续 seq。它只在请求 goroutine 中修改一个小型内存映射；
+// 实际的数据库操作由 run 批量执行。
 func (f *orderedPublishedWatermarkFlusher) Confirm(conversationID uint, seq uint64) {
 	if conversationID == 0 || seq == 0 {
 		return
@@ -382,10 +394,9 @@ func (f *orderedPublishedWatermarkFlusher) flushOne(parent context.Context, conv
 		logger.Uint("conversation_id", conversationID),
 		logger.Any("published_through", seq),
 		logger.String("error", err.Error()))
-	// Redis has already released this sequence, so retry only the database
-	// checkpoint. Immediately replaying the conversation here would turn a
-	// transient row-lock timeout into duplicate reads, writes and more locking.
-	// The age-gated periodic recovery remains the crash-safety fallback.
+	// Redis 已经放行此序列，因此只重试数据库检查点。在这里立即重放会话会将
+	// 短暂的行锁超时变成重复读取、写入和更多锁竞争。按时间阈值触发的定期恢复
+	// 仍作为进程崩溃时的兜底方案。
 	f.Confirm(conversationID, seq)
 }
 
@@ -417,19 +428,4 @@ func publishOrderedEvent(ctx context.Context, event dto.OrderedMessageEvent) (ui
 		return 0, err
 	}
 	return event.Seq, nil
-}
-
-var orderedDelivery = newOrderedMessageDelivery(WSHub)
-var orderedMessagePublisher = newOrderedMessagePublisher()
-var orderedPublishedWatermarks = newOrderedPublishedWatermarkFlusher()
-
-// InitOrderedMessageProcessing 由 main 在 service 与 wsBus 都就绪后调用。
-func InitOrderedMessageProcessing(ctx context.Context) {
-	orderedMessagePublisher.Start(ctx)
-	orderedPublishedWatermarks.Start(ctx)
-}
-
-// OrderedDeliverySender 供 LocalBus 和 RedisBus 使用，保证两者先通过会话分区 dispatcher。
-func OrderedDeliverySender() wsbus.Sender {
-	return orderedDelivery
 }
