@@ -129,7 +129,9 @@ func Load() (*Config, error) {
 	v.SetDefault("redis.addr", "127.0.0.1:6379")
 	v.SetDefault("redis.password", "")
 	v.SetDefault("redis.db", 0)
-	v.SetDefault("kafka.enabled", false)
+	// 聊天消息默认经 Kafka 异步接收和按会话分区处理；需要简化部署时可在
+	// 配置文件中显式设为 false，退回同步 PostgreSQL 写入路径。
+	v.SetDefault("kafka.enabled", true)
 	v.SetDefault("kafka.brokers", []string{"127.0.0.1:9092"})
 	v.SetDefault("kafka.topic", "chat-messages")
 	v.SetDefault("kafka.group_id", "go-chat-message-writers")

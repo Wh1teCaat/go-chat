@@ -72,15 +72,7 @@ func (s *messageService) SendConversationMessage(ctx context.Context, senderID u
 		return nil, err
 	}
 
-	fileID, hasFile := fileIDFromMessageContent(content)
-	message := &model.Message{
-		ConversationID: conversation.ID,
-		SenderID:       senderID,
-		Content:        content,
-	}
-	if clientMsgID != "" {
-		message.ClientMsgID = &clientMsgID
-	}
+	var message *model.Message
 	// 消息落库和文件绑定必须同事务：绑定失败时回滚消息，避免留下接收方无权下载附件的孤儿消息。
 	var publishBaseSeq uint64
 	err = repo.WithTransaction(func(tx *repository.Repository) error {
@@ -89,24 +81,18 @@ func (s *messageService) SendConversationMessage(ctx context.Context, senderID u
 				return err
 			}
 		}
-		seq, publishedSeq, err := tx.ReserveNextConversationSeq(ctx, conversation.ID)
+		var err error
+		message, err = s.insertConversationMessage(ctx, tx, conversation.ID, senderID, content, clientMsgID)
 		if err != nil {
 			return err
 		}
-		message.Seq = seq
-		publishBaseSeq = publishedSeq
-		if err := tx.CreateMessage(ctx, message); err != nil {
-			return err
-		}
-		if hasFile {
-			// 文件消息落库后，把文件绑定到当前会话，下载接口据此判断会话成员权限。
-			return tx.BindFileToConversation(ctx, fileID, senderID, conversation.ID)
-		}
-		return nil
+		publishBaseSeq, err = tx.GetConversationPublishedSeq(ctx, conversation.ID)
+		return err
 	})
 	if err != nil {
-		// 并发重发可能同时通过上面的查重后撞唯一索引；此时重查按重复消息返回。
-		if clientMsgID != "" {
+		// 唯一索引是并发重发的最终防线。只有确认是重复键时才查询已有消息；
+		// 连接、超时或文件绑定等其他错误应直接返回，避免额外访问数据库。
+		if clientMsgID != "" && errors.Is(err, gorm.ErrDuplicatedKey) {
 			if existing, qErr := repo.GetMessageBySenderAndClientMsgID(ctx, senderID, clientMsgID); qErr == nil {
 				return s.duplicateMessageResult(existing, clientMsgID, input)
 			}
@@ -135,9 +121,8 @@ func (s *messageService) SendConversationMessage(ctx context.Context, senderID u
 	}, nil
 }
 
-// ResolveConversationIDForMessage performs the validation required before a
-// command is keyed into Kafka. The accepted command keeps this authorization
-// decision while it waits for persistence, matching the ACK acceptance point.
+// ResolveConversationIDForMessage 在命令按会话键写入 Kafka 前完成必要校验。
+// 已接收的命令在等待持久化期间保留该授权结果，与 ACK 的接收确认点保持一致。
 func (s *messageService) ResolveConversationIDForMessage(ctx context.Context, senderID uint, input dto.SendMessageInput) (uint, error) {
 	conversation, _, _, err := s.prepareConversationMessage(ctx, senderID, input)
 	if err != nil {
@@ -149,11 +134,41 @@ func (s *messageService) ResolveConversationIDForMessage(ctx context.Context, se
 	return conversation.ID, nil
 }
 
-// StoreQueuedConversationMessages writes one Kafka partition micro-batch in a
-// single transaction. Commands were validated before enqueue. If the batch
-// encounters a duplicate or another record-specific failure, it is rolled back
-// and retried through the existing per-message idempotent path.
+// insertConversationMessage 在调用方事务中分配序号、写入消息并绑定附件。
+// 调用方负责校验输入，并在任一步失败时回滚整个事务。
+func (s *messageService) insertConversationMessage(ctx context.Context, tx *repository.Repository, conversationID, senderID uint, content, clientMsgID string) (*model.Message, error) {
+	seq, err := tx.ReserveNextConversationSeqOnly(ctx, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	message := &model.Message{ConversationID: conversationID, SenderID: senderID, Seq: seq, Content: content}
+	if clientMsgID != "" {
+		message.ClientMsgID = &clientMsgID
+	}
+	if err := tx.CreateMessage(ctx, message); err != nil {
+		return nil, err
+	}
+	if fileID, ok := fileIDFromMessageContent(content); ok {
+		if err := tx.BindFileToConversation(ctx, fileID, senderID, conversationID); err != nil {
+			return nil, err
+		}
+	}
+	return message, nil
+}
+
+// StoreQueuedConversationMessages 在单个事务中写入一个 Kafka 分区的微批次。
+// 命令在入队前已完成校验。如果批次遇到重复或其他单条记录失败，则回滚批次，
+// 并使用相同的入库逻辑逐条开启事务重试。
 func (s *messageService) StoreQueuedConversationMessages(ctx context.Context, queued []QueuedConversationMessage) ([]QueuedConversationMessageResult, error) {
+	results, err := s.storeQueuedConversationMessageBatch(ctx, queued)
+	if err != nil {
+		return s.storeQueuedConversationMessagesIndividually(ctx, queued), nil
+	}
+	return s.completeQueuedMessageResults(ctx, queued, results)
+}
+
+// storeQueuedConversationMessageBatch 也用于逐条降级，确保两条路径使用相同的入队数据和校验。
+func (s *messageService) storeQueuedConversationMessageBatch(ctx context.Context, queued []QueuedConversationMessage) ([]QueuedConversationMessageResult, error) {
 	if len(queued) == 0 {
 		return nil, nil
 	}
@@ -170,24 +185,9 @@ func (s *messageService) StoreQueuedConversationMessages(ctx context.Context, qu
 			if item.ConversationID == 0 || item.SenderID == 0 || content == "" || clientMsgID == "" || len(clientMsgID) > 64 {
 				return apperrors.WithMessage(apperrors.ErrInvalidInput, "invalid queued message")
 			}
-			seq, err := tx.ReserveNextConversationSeqOnly(ctx, item.ConversationID)
+			message, err := s.insertConversationMessage(ctx, tx, item.ConversationID, item.SenderID, content, clientMsgID)
 			if err != nil {
 				return err
-			}
-			message := &model.Message{
-				ConversationID: item.ConversationID,
-				Seq:            seq,
-				SenderID:       item.SenderID,
-				ClientMsgID:    &clientMsgID,
-				Content:        content,
-			}
-			if err := tx.CreateMessage(ctx, message); err != nil {
-				return err
-			}
-			if fileID, hasFile := fileIDFromMessageContent(content); hasFile {
-				if err := tx.BindFileToConversation(ctx, fileID, item.SenderID, item.ConversationID); err != nil {
-					return err
-				}
 			}
 			results[i].Message = &ConversationMessageResult{
 				Message:        toMessageOutput(*message),
@@ -200,9 +200,13 @@ func (s *messageService) StoreQueuedConversationMessages(ctx context.Context, qu
 		return nil
 	})
 	if err != nil {
-		return s.storeQueuedConversationMessagesIndividually(ctx, queued), nil
+		return nil, err
 	}
 
+	return results, nil
+}
+
+func (s *messageService) completeQueuedMessageResults(ctx context.Context, queued []QueuedConversationMessage, results []QueuedConversationMessageResult) ([]QueuedConversationMessageResult, error) {
 	for i, item := range queued {
 		if item.Input.TargetType == dto.MessageTargetTypePrivate {
 			results[i].Message.ReceiverIDs = []uint{item.Input.TargetID}
@@ -220,7 +224,29 @@ func (s *messageService) StoreQueuedConversationMessages(ctx context.Context, qu
 func (s *messageService) storeQueuedConversationMessagesIndividually(ctx context.Context, queued []QueuedConversationMessage) []QueuedConversationMessageResult {
 	results := make([]QueuedConversationMessageResult, len(queued))
 	for i, item := range queued {
-		results[i].Message, results[i].Err = s.SendConversationMessage(ctx, item.SenderID, item.Input)
+		stored, err := s.storeQueuedConversationMessageBatch(ctx, []QueuedConversationMessage{item})
+		if err == nil {
+			completed, completionErr := s.completeQueuedMessageResults(ctx, []QueuedConversationMessage{item}, stored)
+			if completionErr != nil {
+				results[i].Err = completionErr
+			} else {
+				results[i] = completed[0]
+			}
+			continue
+		}
+		// 批次事务已结束；重复键查询必须在回滚之后进行。
+		clientMsgID := strings.TrimSpace(item.Input.ClientMsgID)
+		if clientMsgID != "" && errors.Is(err, gorm.ErrDuplicatedKey) {
+			if existing, queryErr := repo.GetMessageBySenderAndClientMsgID(ctx, item.SenderID, clientMsgID); queryErr == nil {
+				results[i].Message, results[i].Err = s.duplicateMessageResult(existing, clientMsgID, item.Input)
+				continue
+			}
+		}
+		if errors.Is(err, apperrors.ErrInvalidInput) {
+			results[i].Err = err
+		} else {
+			results[i].Err = dbOperationError(err)
+		}
 	}
 	return results
 }

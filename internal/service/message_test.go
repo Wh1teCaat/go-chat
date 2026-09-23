@@ -474,3 +474,62 @@ func TestMarkPrivateMessageReadEventTargetsReaderForReceivers(t *testing.T) {
 		t.Fatalf("expected private read event targetID %d for receivers, got %d", reader.ID, result.Event.TargetID)
 	}
 }
+
+func TestQueuedFallbackPreservesConversationAndSequence(t *testing.T) {
+	db := setupTestDB(t)
+	initRepo(db)
+	sender := createTestUser(t, db, "fallback-sender@test.com")
+	receiver := createTestUser(t, db, "fallback-receiver@test.com")
+	conversation := setupPrivateConversation(t, db, sender.ID, receiver.ID)
+	makeItem := func(id, content string) QueuedConversationMessage {
+		return QueuedConversationMessage{
+			ConversationID: conversation.ID, SenderID: sender.ID,
+			Input: dto.SendMessageInput{Type: dto.WSMessageTypeMessage, ClientMsgID: id, Content: content, TargetType: dto.MessageTargetTypePrivate, TargetID: receiver.ID},
+		}
+	}
+	original := makeItem("original", "original")
+	first, err := MessageService.StoreQueuedConversationMessages(context.Background(), []QueuedConversationMessage{original})
+	if err != nil || first[0].Err != nil {
+		t.Fatalf("seed: %v, %+v", err, first)
+	}
+	// 入队后成员关系变化，消费仍应使用入队时确定的会话。
+	if err := db.Where("conversation_id = ? AND user_id = ?", conversation.ID, sender.ID).Delete(&model.ConversationMember{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	queued := []QueuedConversationMessage{makeItem("new-before", "before"), original, makeItem("invalid", " "), makeItem("new-after", "after"), makeItem("missing-file", `{"kind":"file","id":999999,"filename":"gone.txt"}`)}
+	results, err := MessageService.StoreQueuedConversationMessages(context.Background(), queued)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, i := range []int{0, 1, 3} {
+		if results[i].Err != nil || results[i].Message == nil {
+			t.Fatalf("result %d: %+v", i, results[i])
+		}
+		if results[i].Message.ConversationID != conversation.ID {
+			t.Fatalf("conversation changed: %+v", results[i])
+		}
+	}
+	if !results[1].Message.Duplicate || results[1].Message.Message.ID != first[0].Message.Message.ID {
+		t.Fatalf("duplicate: %+v", results[1])
+	}
+	if results[4].Err == nil {
+		t.Fatal("missing attachment succeeded")
+	}
+	if results[2].Err == nil {
+		t.Fatal("invalid command succeeded")
+	}
+	if results[0].Message.Message.Seq != 2 || results[3].Message.Message.Seq != 3 {
+		t.Fatalf("rollback consumed sequences: %+v", results)
+	}
+	var refreshed model.Conversation
+	if err := db.First(&refreshed, conversation.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	if err := db.Model(&model.Message{}).Where("conversation_id = ?", conversation.ID).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.LastSeq != 3 || count != 3 {
+		t.Fatalf("last_seq=%d count=%d", refreshed.LastSeq, count)
+	}
+}

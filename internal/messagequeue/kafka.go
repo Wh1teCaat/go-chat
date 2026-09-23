@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -21,8 +20,7 @@ const commandVersion = 1
 const maxPartitionBatch = 64
 const defaultConsumerWorkers = 4
 
-// MessageCommand is the durable hand-off between websocket ingress and the
-// partition consumer that assigns the authoritative database sequence.
+// MessageCommand 是 WebSocket 入口与为其分配权威数据库序列的分区消费者之间的持久交接数据。
 type MessageCommand struct {
 	Version        int                  `json:"version"`
 	ConversationID uint                 `json:"conversationID"`
@@ -39,10 +37,8 @@ type Queue interface {
 	Close() error
 }
 
-// KafkaQueue produces commands and consumes the same topic as part of one
-// consumer group. Kafka assigns each partition to one application instance;
-// records inside a partition are handled serially while different partitions
-// are processed concurrently.
+// KafkaQueue 生产命令，并作为同一消费者组的一部分消费相同的主题。Kafka 会将每个分区分配给一个应用实例；
+// 同一分区内的记录按顺序处理，而不同分区则并发处理。
 type KafkaQueue struct {
 	client  *kgo.Client
 	topic   string
@@ -155,11 +151,11 @@ func (q *KafkaQueue) consume(ctx context.Context) {
 	}
 }
 
-// processRecords assigns each partition to one bounded worker. A worker handles
-// the records of its partition in offset order; different partitions can write
-// PostgreSQL and publish Redis events concurrently. The returned offset for a
-// partition never advances beyond its last successfully handled raw record.
+// processRecords 为每个分区分配一个受限的工作协程。工作协程按偏移量顺序处理其分区内的记录；
+// 不同分区可以并发写入 PostgreSQL 并发布 Redis 事件。分区返回的偏移量绝不会超过
+// 其最后一条成功处理的原始记录。
 func (q *KafkaQueue) processRecords(ctx context.Context, records []*kgo.Record) []*kgo.Record {
+	// Record 按分区分组，确保同一会话的所有命令都在同一协程中按顺序处理。
 	byPartition := make(map[int32][]*kgo.Record)
 	for _, record := range records {
 		byPartition[record.Partition] = append(byPartition[record.Partition], record)
@@ -169,7 +165,6 @@ func (q *KafkaQueue) processRecords(ctx context.Context, records []*kgo.Record) 
 	for partition := range byPartition {
 		partitions = append(partitions, partition)
 	}
-	sort.Slice(partitions, func(i, j int) bool { return partitions[i] < partitions[j] })
 
 	type partitionResult struct {
 		partition int32
@@ -211,9 +206,8 @@ func (q *KafkaQueue) processRecords(ctx context.Context, records []*kgo.Record) 
 	return recordsFromPartitionMap(lastByPartition)
 }
 
-// processPartition is deliberately serial: Kafka keying ensures all commands
-// for one conversation land here, so invoking the handler out of offset order
-// would violate the conversation sequence guarantee.
+// processPartition 特意按顺序执行：Kafka 的键控机制确保同一会话的所有命令都会落在此处，
+// 因此如果不按偏移量顺序调用处理器，就会破坏会话序列的保证。
 func (q *KafkaQueue) processPartition(ctx context.Context, records []*kgo.Record) *kgo.Record {
 	var last *kgo.Record
 	for start := 0; start < len(records); {
@@ -237,16 +231,15 @@ func (q *KafkaQueue) processPartition(ctx context.Context, records []*kgo.Record
 			commands = append(commands, command)
 		}
 		if len(commands) == 0 {
-			// Poison records cannot block this partition forever.
+			// 毒化记录不能永久阻塞此分区。
 			last = rawBatch[len(rawBatch)-1]
 			continue
 		}
 
 		for {
 			if err := q.handler(ctx, commands); err == nil {
-				// The handler covered every valid command before rawBatch's final
-				// record, so committing this offset also skips any poison record
-				// that appeared between them.
+				// 处理器已处理 rawBatch 最后一条记录之前的每个有效命令，
+				// 因此提交此偏移量也会跳过它们之间出现的任何毒化记录。
 				last = rawBatch[len(rawBatch)-1]
 				break
 			} else {

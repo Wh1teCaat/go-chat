@@ -443,8 +443,8 @@ func TestListPendingFriendRequests(t *testing.T) {
 	db := setupTestDB(t)
 	initRepo(db)
 
-	userA := createTestUser(t, db, "a@test.com") // receiver
-	userB := createTestUser(t, db, "b@test.com") // sender
+	userA := createTestUser(t, db, "a@test.com") // 接收方
+	userB := createTestUser(t, db, "b@test.com") // 发送方
 
 	// B 向 A 发起好友申请，A 是接收方。
 	relation := model.FriendRelation{
