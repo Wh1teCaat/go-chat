@@ -507,6 +507,9 @@ func TestMultipartUploadRoutesCompleteFile(t *testing.T) {
 		if _, err := part.Write([]byte(content)); err != nil {
 			t.Fatalf("failed to write chunk: %v", err)
 		}
+		if err := writer.WriteField("sha256", sha256String(content)); err != nil {
+			t.Fatal(err)
+		}
 		if err := writer.Close(); err != nil {
 			t.Fatalf("failed to close multipart writer: %v", err)
 		}

@@ -16,6 +16,7 @@ import (
 
 	"chat_proj/internal/dto"
 	"chat_proj/internal/model"
+	"chat_proj/internal/repository"
 	"chat_proj/internal/storage"
 	"chat_proj/pkg/apperrors"
 
@@ -72,6 +73,7 @@ type InitMultipartUploadInput struct {
 }
 
 type UploadMultipartChunkInput struct {
+	SHA256     string
 	UploadID   string
 	Index      int
 	Reader     io.Reader
@@ -151,32 +153,41 @@ func (s *fileService) InitMultipartUpload(ctx context.Context, input InitMultipa
 
 // UploadMultipartChunk 校验上传会话和分片参数，将分片落盘并记录上传进度。
 func (s *fileService) UploadMultipartChunk(ctx context.Context, input UploadMultipartChunkInput) error {
-	if input.Reader == nil {
-		return apperrors.WithMessage(apperrors.ErrInvalidInput, "chunk is required")
-	}
-	session, err := s.getWritableUploadSession(ctx, input.UploaderID, input.UploadID)
-	if err != nil {
-		return err
-	}
-	if input.Index < 0 || input.Index >= session.TotalChunks {
-		return apperrors.WithMessage(apperrors.ErrInvalidInput, "invalid chunk index")
-	}
-	expectedSize := expectedChunkSize(session, input.Index)
-	if input.Size != expectedSize {
-		return apperrors.WithMessage(apperrors.ErrInvalidInput, "invalid chunk size")
-	}
+	return repo.WithTransaction(func(tx *repository.Repository) error {
+		if input.Reader == nil {
+			return apperrors.WithMessage(apperrors.ErrInvalidInput, "chunk is required")
+		}
+		session, err := s.lockUploadSession(ctx, tx, input.UploaderID, input.UploadID)
+		if err != nil {
+			return err
+		}
+		if err := s.validateWritableUploadSession(session); err != nil {
+			return err
+		}
+		if input.Index < 0 || input.Index >= session.TotalChunks {
+			return apperrors.WithMessage(apperrors.ErrInvalidInput, "invalid chunk index")
+		}
+		expectedSize := expectedChunkSize(session, input.Index)
+		if input.Size != expectedSize {
+			return apperrors.WithMessage(apperrors.ErrInvalidInput, "invalid chunk size")
+		}
 
-	written, err := s.store.SavePart(ctx, session.UploadID, input.Index, input.Reader)
-	if err != nil {
-		return err
-	}
-	if written != expectedSize {
-		return apperrors.WithMessage(apperrors.ErrInvalidInput, "invalid chunk content size")
-	}
-	return repo.UpsertUploadChunk(ctx, &model.UploadChunk{
-		UploadID: session.UploadID,
-		Index:    input.Index,
-		Size:     written,
+		chunkSHA256, err := normalizeClientSHA256(input.SHA256)
+		if err != nil {
+			return err
+		}
+		written, err := s.store.SavePart(ctx, session.UploadID, input.Index, input.Reader, expectedSize, chunkSHA256)
+		if err != nil {
+			return err
+		}
+		if written != expectedSize {
+			return apperrors.WithMessage(apperrors.ErrInvalidInput, "invalid chunk content size")
+		}
+		return tx.UpsertUploadChunk(ctx, &model.UploadChunk{
+			UploadID: session.UploadID,
+			Index:    input.Index,
+			Size:     written,
+		})
 	})
 }
 
@@ -201,83 +212,104 @@ func (s *fileService) GetMultipartUploadStatus(ctx context.Context, userID uint,
 
 // CompleteMultipartUpload 校验所有分片、合并文件并持久化最终文件元数据。
 func (s *fileService) CompleteMultipartUpload(ctx context.Context, userID uint, uploadID string) (*dto.UploadFileOutput, error) {
-	session, err := s.getWritableUploadSession(ctx, userID, uploadID)
-	if err != nil {
-		return nil, err
-	}
-	chunks, err := repo.ListUploadChunks(ctx, uploadID)
-	if err != nil {
-		return nil, dbOperationError(err)
-	}
-	if err := ensureAllChunksPresent(session, chunks); err != nil {
-		return nil, err
-	}
+	var result *dto.UploadFileOutput
+	created := false
+	err := repo.WithTransaction(func(tx *repository.Repository) error {
+		session, err := s.lockUploadSession(ctx, tx, userID, uploadID)
+		if err != nil {
+			return err
+		}
+		if session.Status == model.UploadSessionStatusCompleted {
+			if session.FileID == nil {
+				return apperrors.WithMessage(apperrors.ErrConflict, "completed upload has no saved result")
+			}
+			file, err := tx.GetFileByID(ctx, *session.FileID)
+			if err != nil {
+				return dbOperationError(err)
+			}
+			result = multipartFileOutput(file)
+			return nil
+		}
+		if err := s.validateWritableUploadSession(session); err != nil {
+			return err
+		}
+		chunks, err := tx.ListUploadChunks(ctx, uploadID)
+		if err != nil {
+			return dbOperationError(err)
+		}
+		if err := ensureAllChunksPresent(session, chunks); err != nil {
+			return err
+		}
 
-	stored, err := s.store.CompleteMultipart(ctx, storage.CompleteMultipartInput{
-		UploadID:    session.UploadID,
-		TotalChunks: session.TotalChunks,
-		Meta: storage.ObjectMeta{
+		stored, err := s.store.CompleteMultipart(ctx, storage.CompleteMultipartInput{
+			UploadID:    session.UploadID,
+			TotalChunks: session.TotalChunks,
+			Meta: storage.ObjectMeta{
+				OriginalName: session.OriginalName,
+				ContentType:  session.ContentType,
+				Size:         session.Size,
+				Extension:    filepath.Ext(session.OriginalName),
+			},
+		})
+		if err != nil {
+			return err
+		}
+		if stored.Size != session.Size {
+			_ = s.store.Delete(ctx, stored.Key)
+			return apperrors.WithMessage(apperrors.ErrInvalidInput, "completed file size mismatch")
+		}
+		if err := s.ensureStoredSHA256(ctx, stored, session.SHA256); err != nil {
+			return err
+		}
+
+		file := &model.File{
+			UserID:       session.UserID,
 			OriginalName: session.OriginalName,
+			StoredName:   stored.StoredName,
+			StorageKey:   stored.Key,
+			URL:          stored.URL,
 			ContentType:  session.ContentType,
-			Size:         session.Size,
-			Extension:    filepath.Ext(session.OriginalName),
-		},
+			Size:         stored.Size,
+			SHA256:       stored.SHA256,
+			Purpose:      session.Purpose,
+		}
+		if err := tx.CreateFile(ctx, file); err != nil {
+			_ = s.store.Delete(ctx, stored.Key)
+			return dbOperationError(err)
+		}
+		if err := tx.CompleteUploadSession(ctx, uploadID, file.ID); err != nil {
+			_ = s.store.Delete(context.WithoutCancel(ctx), stored.Key)
+			return dbOperationError(err)
+		}
+		result = multipartFileOutput(file)
+		created = true
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	if stored.Size != session.Size {
-		_ = s.store.Delete(ctx, stored.Key)
-		return nil, apperrors.WithMessage(apperrors.ErrInvalidInput, "completed file size mismatch")
+	// Only the transaction that produced the result cleans up, after commit.
+	if created {
+		_ = s.store.DeleteMultipart(context.WithoutCancel(ctx), uploadID)
 	}
-	if err := s.ensureStoredSHA256(ctx, stored, session.SHA256); err != nil {
-		return nil, err
-	}
-
-	file := &model.File{
-		UserID:       session.UserID,
-		OriginalName: session.OriginalName,
-		StoredName:   stored.StoredName,
-		StorageKey:   stored.Key,
-		URL:          stored.URL,
-		ContentType:  session.ContentType,
-		Size:         stored.Size,
-		SHA256:       stored.SHA256,
-		Purpose:      session.Purpose,
-	}
-	if err := repo.CreateFile(ctx, file); err != nil {
-		_ = s.store.Delete(ctx, stored.Key)
-		return nil, dbOperationError(err)
-	}
-	if err := repo.UpdateUploadSessionStatus(ctx, uploadID, model.UploadSessionStatusCompleted); err != nil {
-		return nil, dbOperationError(err)
-	}
-	_ = s.store.DeleteMultipart(ctx, uploadID)
-
-	return &dto.UploadFileOutput{
-		ID:          file.ID,
-		URL:         uploadResponseURL(file),
-		Filename:    file.OriginalName,
-		Size:        file.Size,
-		ContentType: file.ContentType,
-		SHA256:      file.SHA256,
-		Purpose:     dto.FilePurpose(file.Purpose),
-	}, nil
+	return result, nil
 }
 
 // CancelMultipartUpload 将用户的未完成上传标记为取消并删除临时分片。
 func (s *fileService) CancelMultipartUpload(ctx context.Context, userID uint, uploadID string) error {
-	session, err := s.getUploadSession(ctx, userID, uploadID)
-	if err != nil {
-		return err
-	}
-	if session.Status == model.UploadSessionStatusCompleted {
-		return apperrors.WithMessage(apperrors.ErrConflict, "upload already completed")
-	}
-	if err := repo.UpdateUploadSessionStatus(ctx, uploadID, model.UploadSessionStatusCanceled); err != nil {
-		return dbOperationError(err)
-	}
-	return s.store.DeleteMultipart(ctx, uploadID)
+	return repo.WithTransaction(func(tx *repository.Repository) error {
+		session, err := s.lockUploadSession(ctx, tx, userID, uploadID)
+		if err != nil {
+			return err
+		}
+		if session.Status == model.UploadSessionStatusCompleted {
+			return apperrors.WithMessage(apperrors.ErrConflict, "upload already completed")
+		}
+		if err := tx.UpdateUploadSessionStatus(ctx, uploadID, model.UploadSessionStatusCanceled); err != nil {
+			return dbOperationError(err)
+		}
+		return s.store.DeleteMultipart(ctx, uploadID)
+	})
 }
 
 // CleanupExpiredMultipartUploads 清理过期未完成的分片上传会话。
@@ -553,22 +585,36 @@ func (s *fileService) isAllowedByLegacyFileMessage(ctx context.Context, requeste
 	return false, nil
 }
 
-// getWritableUploadSession 获取属于用户且仍可写入的未过期上传会话。
-func (s *fileService) getWritableUploadSession(ctx context.Context, userID uint, uploadID string) (*model.UploadSession, error) {
+func (s *fileService) validateWritableUploadSession(session *model.UploadSession) error {
 	if s.store == nil {
-		return nil, apperrors.WithMessage(apperrors.ErrInvalidInput, "file storage is not initialized")
-	}
-	session, err := s.getUploadSession(ctx, userID, uploadID)
-	if err != nil {
-		return nil, err
+		return apperrors.WithMessage(apperrors.ErrInvalidInput, "file storage is not initialized")
 	}
 	if session.Status != model.UploadSessionStatusPending {
-		return nil, apperrors.WithMessage(apperrors.ErrConflict, "upload is not pending")
+		return apperrors.WithMessage(apperrors.ErrConflict, "upload is not pending")
 	}
 	if time.Now().After(session.ExpiresAt) {
-		return nil, apperrors.WithMessage(apperrors.ErrConflict, "upload session expired")
+		return apperrors.WithMessage(apperrors.ErrConflict, "upload session expired")
+	}
+	return nil
+}
+
+func (s *fileService) lockUploadSession(ctx context.Context, tx *repository.Repository, userID uint, uploadID string) (*model.UploadSession, error) {
+	session, err := tx.LockUploadSession(ctx, strings.TrimSpace(uploadID))
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, apperrors.ErrNotFound
+	}
+	if err != nil {
+		return nil, dbOperationError(err)
+	}
+	if session.UserID != userID {
+		return nil, apperrors.ErrPermissionDenied
 	}
 	return session, nil
+}
+
+func multipartFileOutput(file *model.File) *dto.UploadFileOutput {
+	return &dto.UploadFileOutput{ID: file.ID, URL: uploadResponseURL(file), Filename: file.OriginalName,
+		Size: file.Size, ContentType: file.ContentType, SHA256: file.SHA256, Purpose: dto.FilePurpose(file.Purpose)}
 }
 
 // getUploadSession 获取上传会话并校验其归属用户。

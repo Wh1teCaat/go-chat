@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"strconv"
 	"time"
 
@@ -37,6 +40,9 @@ func refreshTokenKey(jti string) string {
 	return "v2:auth:refresh:" + jti
 }
 
+// refreshResultKey 保存短期的加密刷新结果。
+func refreshResultKey(jti string) string { return "v2:auth:refresh_result:" + jti }
+
 // generateTokenPair 生成令牌及随机标识，不修改存储。
 func generateTokenPair(userID uint, username string) (*TokenPair, string, error) {
 	accessToken, accessExpireAt, err := auth.GenerateAccessToken(userID, username)
@@ -57,15 +63,21 @@ func generateTokenPair(userID uint, username string) (*TokenPair, string, error)
 }
 
 // RefreshTokenPair 校验并轮换 refresh token：旧 jti 立即吊销，返回新的 token 对。
-// jti 不在 allowlist 时可能是已登出、已轮换（重放）或服务端重启丢失，一律要求重新登录。
-func (s *tokenService) RefreshTokenPair(ctx context.Context, refreshToken string) (*TokenPair, error) {
+// 同一 requestID 可在 60 秒内取回首次结果；其它重放或状态丢失要求重新登录。
+func (s *tokenService) RefreshTokenPair(ctx context.Context, refreshToken, requestID string) (*TokenPair, error) {
+	if requestID != "" {
+		if _, err := hex.DecodeString(requestID); err != nil || len(requestID) != 32 {
+			return nil, apperrors.WithMessage(apperrors.ErrInvalidInput, "requestID must be 32 hexadecimal characters")
+		}
+	}
+
 	claims, err := auth.ValidateToken(refreshToken, auth.TokenTypeRefresh)
 	if err != nil {
 		return nil, apperrors.WithCause(apperrors.ErrInvalidToken, "invalid refresh token", err)
 	}
-	if claims.ID == "" {
-		// 旧版本签发的 refresh token 没有 jti，无法参与吊销体系，直接要求重新登录。
-		return nil, apperrors.WithMessage(apperrors.ErrInvalidToken, "refresh token missing jti")
+	if claims.ID == "" || claims.ExpiresAt == nil {
+		// 无标识或过期时间的令牌不能参与吊销和有界恢复。
+		return nil, apperrors.WithMessage(apperrors.ErrInvalidToken, "refresh token missing jti or expiry")
 	}
 
 	pair, newJTI, err := generateTokenPair(claims.UserID, claims.Username)
@@ -73,6 +85,47 @@ func (s *tokenService) RefreshTokenPair(ctx context.Context, refreshToken string
 		return nil, err
 	}
 	user := strconv.FormatUint(uint64(claims.UserID), 10)
+	if requestID != "" {
+		encoded, err := json.Marshal(pair)
+		if err != nil {
+			return nil, err
+		}
+		binding := claims.ID + ":" + requestID + ":" + user
+		sealed, err := auth.SealRefreshResult(encoded, binding)
+		if err != nil {
+			return nil, apperrors.WithCause(apperrors.ErrTokenOperation, "failed to encrypt refresh result", err)
+		}
+		resultTTL := time.Until(claims.ExpiresAt.Time)
+		if resultTTL > time.Minute {
+			resultTTL = time.Minute
+		}
+		result, err := tokenStore.RotateToken(ctx, cache.TokenRotation{
+			OldKey: refreshTokenKey(claims.ID), NewKey: refreshTokenKey(newJTI), ResultKey: refreshResultKey(claims.ID),
+			UserID: user, RequestID: requestID, EncryptedResult: sealed,
+			TokenTTL: time.Until(time.Unix(pair.RefreshExpireAt, 0)), ResultTTL: resultTTL,
+		})
+		if err != nil {
+			return nil, apperrors.WithCause(apperrors.ErrTokenOperation, "failed to rotate refresh token", err)
+		}
+		if result == nil {
+			return nil, apperrors.WithMessage(apperrors.ErrInvalidToken, "refresh token revoked")
+		}
+		plaintext, err := auth.OpenRefreshResult(result.EncryptedResult, binding)
+		if err == nil {
+			err = json.Unmarshal(plaintext, pair)
+		}
+		if err == nil {
+			var refreshed *auth.Claims
+			refreshed, err = auth.ValidateToken(pair.RefreshToken, auth.TokenTypeRefresh)
+			if err == nil && (refreshed.UserID != claims.UserID || refreshTokenKey(refreshed.ID) != result.NewKey) {
+				err = errors.New("cached refresh result binding mismatch")
+			}
+		}
+		if err != nil {
+			return nil, apperrors.WithCause(apperrors.ErrTokenOperation, "invalid cached refresh result", err)
+		}
+		return pair, nil
+	}
 	rotated, err := tokenStore.RotateString(ctx, refreshTokenKey(claims.ID), refreshTokenKey(newJTI), user, user, time.Until(time.Unix(pair.RefreshExpireAt, 0)))
 	if err != nil {
 		return nil, apperrors.WithCause(apperrors.ErrTokenOperation, "failed to rotate refresh token", err)
@@ -89,7 +142,7 @@ func (s *tokenService) RevokeRefreshToken(ctx context.Context, refreshToken stri
 	if err != nil || claims.ID == "" {
 		return nil
 	}
-	if err := tokenStore.Delete(ctx, refreshTokenKey(claims.ID)); err != nil {
+	if err := tokenStore.RevokeToken(ctx, refreshTokenKey(claims.ID), refreshResultKey(claims.ID), strconv.FormatUint(uint64(claims.UserID), 10)); err != nil {
 		return apperrors.WithCause(apperrors.ErrTokenOperation, "failed to revoke refresh token", err)
 	}
 	return nil

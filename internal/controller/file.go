@@ -82,7 +82,7 @@ func InitMultipartUpload(c *gin.Context) {
 	response.OK(c, result)
 }
 
-// UploadMultipartChunk 保存一个分片；重复上传同一 index 会覆盖旧分片。
+// UploadMultipartChunk 校验分片摘要，支持复用磁盘上已成功保存的分片。
 func UploadMultipartChunk(c *gin.Context) {
 	index, err := strconv.Atoi(c.Param("index"))
 	if err != nil || index < 0 {
@@ -97,6 +97,7 @@ func UploadMultipartChunk(c *gin.Context) {
 	defer file.Close()
 
 	err = service.FileService.UploadMultipartChunk(c.Request.Context(), service.UploadMultipartChunkInput{
+		SHA256:     c.PostForm("sha256"),
 		UploadID:   c.Param("uploadID"),
 		Index:      index,
 		Reader:     file,

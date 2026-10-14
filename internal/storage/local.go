@@ -161,41 +161,62 @@ func (r *rangeReadCloser) Close() error {
 	return r.closer.Close()
 }
 
-// SavePart 保存一次分片上传的临时分片，重复上传同一分片时覆盖旧内容。
-func (s *LocalStorage) SavePart(ctx context.Context, uploadID string, index int, reader io.Reader) (int64, error) {
-	if reader == nil {
-		return 0, apperrors.WithMessage(apperrors.ErrInvalidInput, "chunk content is required")
+// SavePart 校验并复用已有分片，否则验证临时文件后原子替换。
+// 未提供摘要的旧客户端仍可上传，但不会复用已有文件。
+func (s *LocalStorage) SavePart(ctx context.Context, uploadID string, index int, reader io.Reader, expectedSize int64, expectedSHA256 string) (int64, error) {
+	if reader == nil || index < 0 || expectedSize < 0 {
+		return 0, apperrors.WithMessage(apperrors.ErrInvalidInput, "invalid chunk input")
 	}
-	if index < 0 {
-		return 0, apperrors.WithMessage(apperrors.ErrInvalidInput, "invalid chunk index")
+	if err := ctx.Err(); err != nil {
+		return 0, apperrors.WithCause(apperrors.ErrInvalidInput, "chunk upload canceled", err)
 	}
-	select {
-	case <-ctx.Done():
-		return 0, apperrors.WithCause(apperrors.ErrInvalidInput, "chunk upload canceled", ctx.Err())
-	default:
-	}
-
 	dir, err := s.multipartDir(uploadID)
 	if err != nil {
 		return 0, err
 	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return 0, apperrors.WithCause(apperrors.ErrDBOperation, "failed to create multipart directory", err)
+		return 0, err
 	}
-
 	partPath := filepath.Join(dir, partFilename(index))
-	dst, err := os.OpenFile(partPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		return 0, apperrors.WithCause(apperrors.ErrDBOperation, "failed to create chunk file", err)
-	}
-	written, copyErr := io.Copy(dst, reader)
-	closeErr := dst.Close()
-	if copyErr != nil || closeErr != nil {
-		_ = os.Remove(partPath)
-		if copyErr != nil {
-			return 0, apperrors.WithCause(apperrors.ErrDBOperation, "failed to save chunk file", copyErr)
+	if expectedSHA256 != "" {
+		existing, err := os.Open(partPath)
+		if err == nil {
+			hash := sha256.New()
+			n, readErr := io.Copy(hash, io.LimitReader(existing, expectedSize+1))
+			closeErr := existing.Close()
+			if readErr == nil && closeErr == nil && n == expectedSize && hex.EncodeToString(hash.Sum(nil)) == expectedSHA256 {
+				return n, ctx.Err()
+			}
+		} else if !os.IsNotExist(err) {
+			return 0, err
 		}
+	}
+	// 临时文件与目标文件位于同一目录，rename 不会暴露半写入的分片。
+	dst, err := os.CreateTemp(dir, ".chunk-*")
+	if err != nil {
+		return 0, err
+	}
+	defer os.Remove(dst.Name())
+	hash := sha256.New()
+	written, copyErr := io.Copy(io.MultiWriter(dst, hash), io.LimitReader(reader, expectedSize+1))
+	closeErr := dst.Close()
+	if copyErr != nil {
+		return 0, apperrors.WithCause(apperrors.ErrDBOperation, "failed to save chunk file", copyErr)
+	}
+	if closeErr != nil {
 		return 0, apperrors.WithCause(apperrors.ErrDBOperation, "failed to close chunk file", closeErr)
+	}
+	if written != expectedSize {
+		return 0, apperrors.WithMessage(apperrors.ErrInvalidInput, "invalid chunk content size")
+	}
+	if expectedSHA256 != "" && hex.EncodeToString(hash.Sum(nil)) != expectedSHA256 {
+		return 0, apperrors.WithMessage(apperrors.ErrInvalidInput, "chunk sha256 mismatch")
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, apperrors.WithCause(apperrors.ErrInvalidInput, "chunk upload canceled", err)
+	}
+	if err := os.Rename(dst.Name(), partPath); err != nil {
+		return 0, apperrors.WithCause(apperrors.ErrDBOperation, "failed to publish chunk file", err)
 	}
 	return written, nil
 }

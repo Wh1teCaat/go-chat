@@ -1,3 +1,4 @@
+import { AUTH_STORAGE_KEY, createAuthSession, redactAuthSecrets } from "./auth-session.js";
 import {
   applyMessageAck,
   applyMessageFailure,
@@ -49,7 +50,7 @@ const state = {
   searchQuery: "",
   activeUpload: null,
   refreshTimer: 0,
-  refreshPromise: null,
+  authSessionID: "",
   reconnectTimer: 0,
   reconnectAttempts: 0,
 };
@@ -107,15 +108,37 @@ const els = {
   logOutput: document.querySelector("#logOutput"),
 };
 
+const authSession = createAuthSession({
+  storage: localStorage, getBaseUrl: apiBase,
+  onChange: updateAuthState,
+  onError: (error) => log("REFRESH ERROR", error.message),
+});
+
 init();
 
 function init() {
   els.baseUrl.value = localStorage.getItem("chatBaseUrl") || "http://localhost:8080";
-  state.token = localStorage.getItem("chatToken") || "";
-  state.refreshToken = localStorage.getItem("chatRefreshToken") || "";
-  state.tokenExpireAt = Number(localStorage.getItem("chatTokenExpireAt") || 0);
-  state.refreshExpireAt = Number(localStorage.getItem("chatRefreshExpireAt") || 0);
-  state.email = localStorage.getItem("chatEmail") || "";
+  const session = authSession.read();
+  state.authSessionID = session?.id || "";
+  state.token = session?.token || "";
+  state.refreshToken = session?.refreshToken || "";
+  state.tokenExpireAt = session?.tokenExpireAt || 0;
+  state.refreshExpireAt = session?.refreshExpireAt || 0;
+  state.email = session?.email || "";
+  window.addEventListener("storage", (event) => {
+    if (event.key !== AUTH_STORAGE_KEY) return;
+    const previousID = state.authSessionID;
+    authSession.sync();
+    if (state.token && previousID !== state.authSessionID) {
+      disconnectWs();
+      state.currentTarget = null;
+      state.messages = [];
+      state.avatar = localStorage.getItem(avatarStorageKey()) || "";
+      showChat();
+      refreshAll();
+      connectWs();
+    }
+  });
   state.currentUserID = decodeTokenUserID(state.token);
   state.avatar = localStorage.getItem(avatarStorageKey()) || "";
   bindEvents();
@@ -123,6 +146,7 @@ function init() {
   if (state.token) {
     showChat();
     scheduleTokenRefresh();
+    if (session?.pending) refreshAuthToken();
     refreshAll();
     connectWs();
     return;
@@ -202,9 +226,8 @@ async function login(event) {
   }
 
   state.email = body.email;
-  applyAuthTokens(data.data);
+  await applyAuthTokens(data.data);
   state.avatar = localStorage.getItem(avatarStorageKey()) || "";
-  localStorage.setItem("chatEmail", state.email);
   localStorage.setItem("chatBaseUrl", apiBase());
   showChat();
   await refreshAll();
@@ -212,55 +235,41 @@ async function login(event) {
 }
 
 function logout() {
-  revokeRefreshTokenOnServer();
-  disconnectWs();
-  clearTokenRefreshTimer();
-  state.token = "";
-  state.refreshToken = "";
-  state.tokenExpireAt = 0;
-  state.refreshExpireAt = 0;
-  state.refreshPromise = null;
-  state.email = "";
-  state.avatar = "";
-  state.currentUserID = 0;
-  state.currentTarget = null;
-  state.messages = [];
-  state.pendingMessageTimers.forEach((timer) => window.clearTimeout(timer));
-  state.pendingMessageTimers.clear();
-  state.readWatermarks.clear();
-  localStorage.removeItem("chatToken");
-  localStorage.removeItem("chatRefreshToken");
-  localStorage.removeItem("chatTokenExpireAt");
-  localStorage.removeItem("chatRefreshExpireAt");
-  localStorage.removeItem("chatEmail");
-  showAuth("login");
+  authSession.logout();
 }
 
-// 登出时吊销服务端的 refresh token，失败也不阻塞本地登出（token 会随 TTL 过期）。
-function revokeRefreshTokenOnServer() {
-  if (!state.refreshToken) {
+function updateAuthState(session) {
+  if (!session) {
+    disconnectWs();
+    clearTokenRefreshTimer();
+    state.authSessionID = "";
+    state.token = "";
+    state.refreshToken = "";
+    state.tokenExpireAt = 0;
+    state.refreshExpireAt = 0;
+    state.email = "";
+    state.avatar = "";
+    state.currentUserID = 0;
+    state.currentTarget = null;
+    state.messages = [];
+    state.pendingMessageTimers.forEach((timer) => window.clearTimeout(timer));
+    state.pendingMessageTimers.clear();
+    state.readWatermarks.clear();
+    showAuth("login");
     return;
   }
-  fetch(`${apiBase()}/v1/user/logout`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refreshToken: state.refreshToken }),
-    keepalive: true,
-  }).catch(() => {});
+  state.authSessionID = session.id;
+  state.token = session.token;
+  state.refreshToken = session.refreshToken;
+  state.tokenExpireAt = session.tokenExpireAt;
+  state.refreshExpireAt = session.refreshExpireAt;
+  state.email = session.email;
+  state.currentUserID = decodeTokenUserID(state.token);
+  scheduleTokenRefresh();
 }
 
 function applyAuthTokens(payload) {
-  state.token = String(payload?.token || "");
-  state.refreshToken = String(payload?.refresh_token || payload?.refreshToken || "");
-  state.tokenExpireAt = Number(payload?.expire_at || payload?.expireAt || 0);
-  state.refreshExpireAt = Number(payload?.refresh_expire_at || payload?.refreshExpireAt || 0);
-  state.currentUserID = decodeTokenUserID(state.token);
-
-  localStorage.setItem("chatToken", state.token);
-  localStorage.setItem("chatRefreshToken", state.refreshToken);
-  localStorage.setItem("chatTokenExpireAt", String(state.tokenExpireAt || 0));
-  localStorage.setItem("chatRefreshExpireAt", String(state.refreshExpireAt || 0));
-  scheduleTokenRefresh();
+  return authSession.login(payload, state.email);
 }
 
 function clearTokenRefreshTimer() {
@@ -275,47 +284,17 @@ function scheduleTokenRefresh() {
   if (!state.token || !state.refreshToken || !state.tokenExpireAt) {
     return;
   }
-  const refreshAt = Math.max(Date.now() + 5000, state.tokenExpireAt * 1000 - 60 * 1000);
+  const pending = authSession.read()?.pending;
+  const refreshAt = pending ? Date.now() + 5000 : Math.max(Date.now() + 5000, state.tokenExpireAt * 1000 - 60 * 1000);
   state.refreshTimer = window.setTimeout(() => {
     refreshAuthToken();
   }, Math.max(0, refreshAt - Date.now()));
 }
 
 async function refreshAuthToken() {
-  if (!state.refreshToken) {
-    return false;
-  }
-  if (state.refreshExpireAt && Date.now() >= state.refreshExpireAt * 1000) {
-    logout();
-    return false;
-  }
-  if (state.refreshPromise) {
-    return state.refreshPromise;
-  }
-
-  state.refreshPromise = (async () => {
-    try {
-      const response = await fetch(`${apiBase()}/v1/user/refresh`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshToken: state.refreshToken }),
-      });
-      const data = safeJson(await response.text());
-      log(`REFRESH RESPONSE ${response.status}`, data);
-      if (!data || data.code !== 0 || !data.data || !data.data.token) {
-        logout();
-        return false;
-      }
-      applyAuthTokens(data.data);
-      return true;
-    } catch (error) {
-      log("REFRESH ERROR", error.message);
-      return false;
-    } finally {
-      state.refreshPromise = null;
-    }
-  })();
-  return state.refreshPromise;
+  const refreshed = await authSession.refresh();
+  if (!refreshed && state.token) scheduleTokenRefresh();
+  return refreshed;
 }
 
 // ====== 好友 / 群组 (不变) ======
@@ -767,7 +746,6 @@ async function apiPost(path, body, options = {}) {
       if (refreshed) {
         return apiPost(path, body, { ...options, skipRefresh: true });
       }
-      logout();
     }
     return data;
   } catch (error) {
@@ -911,7 +889,6 @@ async function apiMultipartUploadStatus(uploadID, options = {}) {
       if (refreshed) {
         return apiMultipartUploadStatus(uploadID, { ...options, skipRefresh: true });
       }
-      logout();
     }
     if (!data || data.code !== 0 || !data.data) {
       return null;
@@ -924,8 +901,11 @@ async function apiMultipartUploadStatus(uploadID, options = {}) {
 }
 
 async function apiUploadMultipartChunk(uploadID, index, chunk, options = {}) {
+  const sha256 = await calculateFileSHA256(chunk, options.signal);
+  if (!sha256) return false;
   const form = new FormData();
   form.append("chunk", chunk, "chunk.part");
+  form.append("sha256", sha256);
   const headers = {};
   if (state.token) {
     headers.Authorization = `Bearer ${state.token}`;
@@ -961,7 +941,6 @@ function apiUploadForm(url, form, options = {}) {
           resolve(apiUploadForm(url, form, { ...options, skipRefresh: true }));
           return;
         }
-        logout();
       }
       resolve(data);
     });
@@ -1738,7 +1717,7 @@ function safeJson(value) {
 
 function log(title, payload) {
   const time = new Date().toLocaleTimeString();
-  const body = typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
+  const body = typeof payload === "string" ? payload : JSON.stringify(redactAuthSecrets(payload), null, 2);
   els.logOutput.textContent = `[${time}] ${title}\n${body}\n\n${els.logOutput.textContent}`;
 }
 

@@ -19,4 +19,17 @@ type Store interface {
 type TokenStore interface {
 	Store
 	RotateString(context.Context, string, string, string, string, time.Duration) (bool, error)
+	RotateToken(context.Context, TokenRotation) (*TokenRotationResult, error)
+	RevokeToken(context.Context, string, string, string) error
+}
+
+type TokenRotation struct {
+	OldKey, NewKey, ResultKey, UserID, RequestID, EncryptedResult string
+	TokenTTL, ResultTTL                                           time.Duration
+}
+type TokenRotationResult struct {
+	RequestID       string `json:"requestID"`
+	UserID          string `json:"userID"`
+	NewKey          string `json:"newKey"`
+	EncryptedResult string `json:"encryptedResult"`
 }
