@@ -5,7 +5,7 @@
 ## 架构
 
 - 后端：Gin + GORM + PostgreSQL，REST 接口处理账号、好友、群组、消息列表和文件上传下载。
-- 认证：JWT access token + refresh token。refresh token 带 jti，服务端用 Redis allowlist 管理（Redis 为必需依赖）；每次刷新轮换并吊销旧 token，重放返回 401；`/v1/user/logout` 吊销 refresh token。WebSocket 通过 `Sec-WebSocket-Protocol` 的 `bearer.<token>` 条目认证，token 不进 URL。前端会在 access token 过期前主动刷新，接口遇到 401 时也会自动刷新后重试。
+- 认证：JWT access token + refresh token。refresh token 带 jti，服务端用 Redis allowlist 管理（Redis 为必需依赖）；每次刷新轮换并吊销旧 token，同一请求可在最多 60 秒内恢复首次结果，其它重放返回 401；`/v1/user/logout` 吊销 refresh token。WebSocket 通过 `Sec-WebSocket-Protocol` 的 `bearer.<token>` 条目认证，token 不进 URL。前端会在 access token 过期前主动刷新，接口遇到 401 时也会自动刷新后重试。
 - 实时消息：Gorilla WebSocket，默认经 Kafka 异步接收。客户端在 Kafka 已接收后得到 `accepted` ACK，消费者批量落库后再推送带权威会话序号的消息。前端据此展示发送中、排队中、已发送、发送失败和已读状态。Kafka 模式要求客户端提供 `clientMsgID`；服务端用 `(sender_id, client_msg_id)` 唯一索引去重，ACK 丢失重发不会重复落库。前端断线后指数退避自动重连，并用 `afterSeq` 按会话序号增量补拉。将 `kafka.enabled` 显式设为 `false` 时，退回同步落库并返回 `stored` ACK。
 - 多实例：Kafka 以 `conversationID` 作为消息 key，同一会话固定进入同一分区并按序消费；消费端在一个事务中批量分配序号和写 PostgreSQL。推送经 `internal/wsbus` 路由，Redis Pub/Sub 会把一个提交批次合成一次发布，各实例再按数组顺序投递本地连接。Kafka 关闭时继续使用 Redis Lua 序号门和数据库发布水位恢复机制。
 - 缓存：Redis 为必需依赖；资料通过显式字段映射存 Hash，refresh token 用户 ID 存 String，通过 Lua 原子轮换。启动连接失败会退出；运行时资料缓存失败回源数据库，Token 操作失败返回错误。
@@ -133,7 +133,7 @@ npm run dev
 - `[redis] enabled`：必须为 `true`，启动前需要可连接的 Redis
 - `[kafka] enabled`：默认 `true`，异步接收聊天消息；Docker Compose 会创建配置中的 topic，本地运行时需自行准备 Kafka 和该 topic。分区数决定可并行处理的会话数；显式设为 `false` 可退回同步落库模式
 - `[kafka] brokers` / `topic` / `group_id`：Kafka 地址、消息主题和消费者组；多个后端实例需使用相同主题和消费者组，分担分区消费
-- `[kafka] consumer_workers`：每个实例并行处理分区的 worker 数，默认 `4`；同一分区内仍串行处理
+- `[kafka] consumer_workers`：每个实例并行处理分区的 worker 数，默认 `16`；同一分区内仍串行处理
 - `[database] max_open_conns`：每个后端实例的数据库最大连接数，示例为 `30`
 - `[log] path`：日志文件路径
 - `[jwt] secret`：部署时必须换成强随机字符串
@@ -160,6 +160,29 @@ goose -dir migrations postgres "postgres://postgres:postgres@localhost:5432/chat
 ```
 
 后续表结构变更不要直接改 `001_init.sql`，应新增递增版本 SQL，当前已有 `001`–`007`，下一次可新增 `008_xxx.sql`。
+
+## 刷新令牌与请求幂等
+
+`POST /v1/user/refresh` 支持以下请求：
+
+```json
+{
+  "refreshToken": "<当前刷新令牌>",
+  "requestID": "0123456789abcdef0123456789abcdef"
+}
+```
+
+`requestID` 是客户端为一次刷新操作生成的随机标识，必须是 32 位十六进制字符。首次发送前保存它；超时、断网或页面重载后，使用同一个旧令牌和同一个标识重试。开始下一次刷新操作时才生成新标识。成功响应字段仍为 `token`、`expire_at`、`refresh_token` 和 `refresh_expire_at`；登录与刷新响应设置 `Cache-Control: no-store`。
+
+服务端先验证 JWT 的签名、用途和有效期，再由 Lua 原子完成新 jti 白名单写入、刷新结果缓存和旧 jti 删除。同一旧 jti 与同一请求标识可以取回首次生成的完整令牌对，不会再次轮换；不同标识的重放返回 401。格式错误的标识返回 400，不消费刷新令牌。未提供标识时兼容原接口，沿用一次性轮换，旧令牌重试返回 401。
+
+恢复缓存键为 `v2:auth:refresh_result:<旧 jti>`，有效期取 60 秒和旧 JWT 剩余有效期中的较小值；命中不会续期。缓存中的令牌对用 AES-GCM 加密，并绑定旧 jti、用户和请求标识；加密密钥从 JWT 签名密钥派生，因此多实例必须使用同一签名密钥。Lua 写入遇到错误时清理已暂存的新键，并保留旧白名单；缓存读取和恢复还会检查后继令牌仍在白名单中。
+
+`POST /v1/user/logout` 仍只需携带 `refreshToken`。使用新令牌登出后，旧请求不能从缓存恢复它；在恢复窗口内使用旧令牌登出，会同时撤销缓存记录和它对应的后继令牌。该机制只追踪窗口内的直接后继，不提供整条令牌家族的撤销能力。
+
+前端把令牌对与待恢复请求保存在同一条 `chatAuthSession` 本地记录中，并迁移旧的分散存储字段。刷新请求单次超时 8 秒，网络异常、5xx 和 429 按 1、2、4 秒退避，最多重试 3 次；暂时失败保留登录状态和原请求标识，页面重载立即恢复待完成请求。明确的刷新 401 或刷新令牌到期才清除登录状态。支持 Web Locks 的浏览器在同源标签页间协调刷新和状态更新；不支持时只保证单页内合并并发刷新。退出或切换账号后，迟到的刷新响应不会覆盖当前会话；页面调试日志中的令牌和密码字段会脱敏。
+
+这是一段有界恢复窗口：缓存过期、Redis 状态丢失、旧 JWT 到期或后继令牌已被撤销后，都不能恢复首次结果。若客户端没有拿到新令牌，仍需重新登录。
 
 ## 文件消息流程
 
@@ -228,6 +251,8 @@ sequenceDiagram
     API->>DB: 创建 files，标记 session completed
     API-->>C: 文件元数据
 ```
+
+分片上传请求的 `multipart/form-data` 可携带该分片的 `sha256`（64 位十六进制），前端会自动计算并发送。服务端先验证已有磁盘分片的大小与 SHA-256；匹配时复用文件并补登记数据库进度，不重新写入。未匹配时先写独立临时文件，校验大小与摘要后原子替换目标分片，再登记进度；校验失败会保留旧分片。旧客户端未提供分片摘要时仍可上传，但不复用已有文件。分片摘要用于逐片校验，init 中的完整文件摘要用于按序合并后的最终校验，两者不能互相替代。合并、分片写入和取消通过数据库事务锁定同一上传会话；合并事务内创建文件记录并保存会话的 `file_id` 和 `completed` 状态。并发或后续合并请求等待锁后复用已保存结果，仅创建结果的请求在提交后清理分片。过期清理的条件更新也受同一行锁约束。合并期间事务持续占用数据库连接；多实例必须共享数据库与分片存储。部署需执行迁移 `008_add_upload_session_file_id.sql`，历史已完成且没有 `file_id` 的会话无法恢复旧结果，返回冲突。进程崩溃或提交结果不确定时可能遗留磁盘文件，需要额外的孤儿文件回收机制。
 
 文件系统会在普通上传和分片合并时计算完整文件的 SHA-256。客户端上传时如果携带 `sha256`，服务端会和实际落盘内容的 SHA-256 比对，不一致会删除已生成的正式文件并返回失败；一致时写入 `files.sha256`，并在上传响应中返回 `sha256`。下载接口会通过 `X-Content-SHA256` 暴露该值，客户端可在下载后重新计算哈希并比对，用来判断文件内容是否损坏或被篡改。这里解决的是完整性校验；如果要做“文件内容别人看不懂”的能力，还需要在存储层另加加密。
 

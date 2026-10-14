@@ -24,6 +24,7 @@ func Register(c *gin.Context) {
 
 // Login 校验用户凭据并签发访问令牌和刷新令牌。
 func Login(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	var input dto.LoginUserInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		response.BindError(c, err)
@@ -45,14 +46,15 @@ func Login(c *gin.Context) {
 
 // RefreshToken 使用有效的刷新令牌轮换并签发新的令牌对。
 func RefreshToken(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	var input dto.RefreshTokenInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		response.BindError(c, err)
 		return
 	}
 
-	// 校验、allowlist 检查和轮换都在 TokenService 内完成；旧 refresh token 从此不可再用。
-	pair, err := service.TokenService.RefreshTokenPair(c.Request.Context(), input.RefreshToken)
+	// TokenService 校验并原子轮换；同一请求可在恢复窗口内取回首次结果。
+	pair, err := service.TokenService.RefreshTokenPair(c.Request.Context(), input.RefreshToken, input.RequestID)
 	if err != nil {
 		response.Error(c, err)
 		return

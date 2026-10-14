@@ -1,17 +1,21 @@
 package service
 
 import (
+	"chat_proj/internal/repository"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 	"io"
 	"mime/multipart"
 	"net/textproto"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -710,5 +714,213 @@ func TestCleanupExpiredMultipartUploadsCancelsSessionAndDeletesParts(t *testing.
 	}
 	if _, err := os.Stat(partDir); !os.IsNotExist(err) {
 		t.Fatalf("expected multipart parts directory to be deleted, got %v", err)
+	}
+}
+
+func TestMultipartRetryRepairsMissingProgressFromVerifiedDiskPart(t *testing.T) {
+	db := setupTestDB(t)
+	initRepo(db)
+	root := t.TempDir()
+	store := storage.NewLocalStorage(root, "/uploads")
+	InitFileStorage(store)
+	ctx := context.Background()
+	digest := sha256Bytes([]byte("hello"))
+	session, err := FileService.InitMultipartUpload(ctx, InitMultipartUploadInput{
+		Filename: "retry.txt", Size: 5, ContentType: "text/plain", Purpose: dto.FilePurposeChatFile,
+		ChunkSize: 5, UploaderID: 7, SHA256: digest,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Model a successful disk write followed by a failed database registration.
+	if _, err := store.SavePart(ctx, session.UploadID, 0, strings.NewReader("hello"), 5, digest); err != nil {
+		t.Fatal(err)
+	}
+	status, err := FileService.GetMultipartUploadStatus(ctx, 7, session.UploadID)
+	if err != nil || len(status.UploadedChunks) != 0 {
+		t.Fatalf("unexpected initial progress: %+v %v", status, err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := FileService.UploadMultipartChunk(ctx, UploadMultipartChunkInput{
+			UploadID: session.UploadID, Index: 0, Reader: strings.NewReader(""), Size: 5, UploaderID: 7, SHA256: digest,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	status, err = FileService.GetMultipartUploadStatus(ctx, 7, session.UploadID)
+	if err != nil || len(status.UploadedChunks) != 1 {
+		t.Fatalf("unexpected repaired progress: %+v %v", status, err)
+	}
+	completed, err := FileService.CompleteMultipartUpload(ctx, 7, session.UploadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.SHA256 != digest {
+		t.Fatalf("wrong complete digest: %s", completed.SHA256)
+	}
+}
+
+// Use separate database pools against the same on-disk database, so this test
+// cannot pass merely because one pool serializes access to a single connection.
+func TestConcurrentMultipartCompleteReusesCommittedResult(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "uploads.db") + "?_busy_timeout=5000"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.UploadSession{}, &model.UploadChunk{}, &model.File{}); err != nil {
+		t.Fatal(err)
+	}
+	initRepo(db)
+	ctx := context.Background()
+	root := t.TempDir()
+	tracked := &countingMultipartStorage{Storage: storage.NewLocalStorage(root, "/uploads"), entered: make(chan struct{}), release: make(chan struct{})}
+	first := &fileService{store: tracked}
+	second := &fileService{store: tracked}
+	session, err := first.InitMultipartUpload(ctx, InitMultipartUploadInput{Filename: "x.txt", Size: 5, ChunkSize: 5, Purpose: dto.FilePurposeChatFile, UploaderID: 7, SHA256: sha256Bytes([]byte("hello"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.UploadMultipartChunk(ctx, UploadMultipartChunkInput{UploadID: session.UploadID, Reader: strings.NewReader("hello"), Size: 5, UploaderID: 7}); err != nil {
+		t.Fatal(err)
+	}
+	type outcome struct {
+		file *dto.UploadFileOutput
+		err  error
+	}
+	results := make(chan outcome, 2)
+	go func() { f, e := first.CompleteMultipartUpload(ctx, 7, session.UploadID); results <- outcome{f, e} }()
+	select {
+	case <-tracked.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("merge did not start")
+	}
+	// While the first transaction owns the lock, an independent connection must
+	// wait for the transaction instead of changing the session.
+	other, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherRepo := repository.NewRepository(other)
+	locked := make(chan error, 1)
+	go func() {
+		locked <- otherRepo.WithTransaction(func(tx *repository.Repository) error { _, e := tx.LockUploadSession(ctx, session.UploadID); return e })
+	}()
+	go func() { f, e := second.CompleteMultipartUpload(ctx, 7, session.UploadID); results <- outcome{f, e} }()
+	select {
+	case err := <-locked:
+		t.Fatalf("lock was not held: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(tracked.release)
+	var id uint
+	for i := 0; i < 2; i++ {
+		select {
+		case r := <-results:
+			if r.err != nil {
+				t.Fatal(r.err)
+			}
+			if i == 0 {
+				id = r.file.ID
+			} else if id != r.file.ID {
+				t.Fatalf("different results: %d / %d", id, r.file.ID)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("completion timed out")
+		}
+	}
+	if err := <-locked; err != nil {
+		t.Fatal(err)
+	}
+	replay, err := second.CompleteMultipartUpload(ctx, 7, session.UploadID)
+	if err != nil || replay.ID != id {
+		t.Fatalf("replay: %+v %v", replay, err)
+	}
+	if tracked.merges.Load() != 1 || tracked.cleanups.Load() != 1 {
+		t.Fatalf("merge=%d cleanup=%d", tracked.merges.Load(), tracked.cleanups.Load())
+	}
+	var count int64
+	if err := db.Model(&model.File{}).Count(&count).Error; err != nil || count != 1 {
+		t.Fatalf("file count %d: %v", count, err)
+	}
+	if err := second.CancelMultipartUpload(ctx, 7, session.UploadID); !errors.Is(err, apperrors.ErrConflict) {
+		t.Fatalf("cancel completed upload: %v", err)
+	}
+	if _, err := second.CompleteMultipartUpload(ctx, 8, session.UploadID); !errors.Is(err, apperrors.ErrPermissionDenied) {
+		t.Fatalf("unauthorized replay: %v", err)
+	}
+}
+
+type countingMultipartStorage struct {
+	storage.Storage
+	merges   atomic.Int32
+	cleanups atomic.Int32
+	entered  chan struct{}
+	release  chan struct{}
+}
+
+func (s *countingMultipartStorage) CompleteMultipart(ctx context.Context, input storage.CompleteMultipartInput) (*storage.StoredObject, error) {
+	if s.merges.Add(1) == 1 {
+		close(s.entered)
+		<-s.release
+	}
+	return s.Storage.CompleteMultipart(ctx, input)
+}
+func (s *countingMultipartStorage) DeleteMultipart(ctx context.Context, id string) error {
+	s.cleanups.Add(1)
+	return s.Storage.DeleteMultipart(ctx, id)
+}
+
+func TestMultipartCompletionRegistrationFailureRollsBackAndRetries(t *testing.T) {
+	db := setupTestDB(t)
+	initRepo(db)
+	root := t.TempDir()
+	svc := &fileService{store: storage.NewLocalStorage(root, "/uploads")}
+	ctx := context.Background()
+	session, err := svc.InitMultipartUpload(ctx, InitMultipartUploadInput{Filename: "x.txt", Size: 5, ChunkSize: 5, Purpose: dto.FilePurposeChatFile, UploaderID: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.UploadMultipartChunk(ctx, UploadMultipartChunkInput{UploadID: session.UploadID, Reader: strings.NewReader("hello"), Size: 5, UploaderID: 7}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Callback().Update().Before("gorm:update").Register("test:reject_completion", func(tx *gorm.DB) {
+		if values, ok := tx.Statement.Dest.(map[string]interface{}); ok && values["file_id"] != nil {
+			tx.AddError(errors.New("injected completion failure"))
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CompleteMultipartUpload(ctx, 7, session.UploadID); err == nil {
+		t.Fatal("expected registration failure")
+	}
+	if err := db.Callback().Update().Remove("test:reject_completion"); err != nil {
+		t.Fatal(err)
+	}
+	current, err := repo.GetUploadSession(ctx, session.UploadID)
+	if err != nil || current.Status != model.UploadSessionStatusPending || current.FileID != nil {
+		t.Fatalf("session not rolled back: %+v %v", current, err)
+	}
+	var count int64
+	if err := db.Model(&model.File{}).Count(&count).Error; err != nil || count != 0 {
+		t.Fatalf("file record not rolled back: %d %v", count, err)
+	}
+	var files []string
+	if err := filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			files = append(files, p)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || filepath.Base(files[0]) != "000000.part" {
+		t.Fatalf("unexpected files after failure: %v", files)
+	}
+	if _, err := svc.CompleteMultipartUpload(ctx, 7, session.UploadID); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -136,7 +136,7 @@ func Load() (*Config, error) {
 	v.SetDefault("kafka.topic", "chat-messages")
 	v.SetDefault("kafka.group_id", "go-chat-message-writers")
 	v.SetDefault("kafka.client_id", "go-chat")
-	v.SetDefault("kafka.consumer_workers", 4)
+	v.SetDefault("kafka.consumer_workers", 16)
 	v.SetDefault("rate_limit.enabled", true)
 	v.SetDefault("rate_limit.requests", 120)
 	v.SetDefault("rate_limit.window_seconds", 60)

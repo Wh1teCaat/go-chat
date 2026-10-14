@@ -118,10 +118,10 @@ func TestLocalStorageMultipartUploadCombinesParts(t *testing.T) {
 	root := t.TempDir()
 	store := NewLocalStorage(root, "/uploads")
 
-	if size, err := store.SavePart(context.Background(), "upload-1", 0, strings.NewReader("hello ")); err != nil || size != int64(len("hello ")) {
+	if size, err := store.SavePart(context.Background(), "upload-1", 0, strings.NewReader("hello "), 6, sha256Hex("hello ")); err != nil || size != int64(len("hello ")) {
 		t.Fatalf("SavePart first returned size=%d err=%v", size, err)
 	}
-	if size, err := store.SavePart(context.Background(), "upload-1", 1, strings.NewReader("world")); err != nil || size != int64(len("world")) {
+	if size, err := store.SavePart(context.Background(), "upload-1", 1, strings.NewReader("world"), 5, sha256Hex("world")); err != nil || size != int64(len("world")) {
 		t.Fatalf("SavePart second returned size=%d err=%v", size, err)
 	}
 
@@ -161,4 +161,49 @@ func TestLocalStorageMultipartUploadCombinesParts(t *testing.T) {
 func sha256Hex(content string) string {
 	sum := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(sum[:])
+}
+
+func TestSavePartReusesVerifiedFileAndPreservesItOnInvalidRetry(t *testing.T) {
+	root := t.TempDir()
+	store := NewLocalStorage(root, "/uploads")
+	ctx := context.Background()
+	if _, err := store.SavePart(ctx, "reuse", 0, strings.NewReader("hello"), 5, sha256Hex("hello")); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, ".parts", "reuse", "000000.part")
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Empty retry body proves the verified disk file is reused without reading or rewriting.
+	if _, err := store.SavePart(ctx, "reuse", 0, strings.NewReader(""), 5, sha256Hex("hello")); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) || !before.ModTime().Equal(after.ModTime()) {
+		t.Fatal("existing file was replaced")
+	}
+	for _, body := range []string{"bad", "wrong", "too long"} {
+		if _, err := store.SavePart(ctx, "reuse", 0, strings.NewReader(body), 5, sha256Hex("world")); err == nil {
+			t.Fatalf("accepted invalid body %q", body)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil || string(data) != "hello" {
+			t.Fatalf("old part damaged: %q %v", data, err)
+		}
+	}
+	if _, err := store.SavePart(ctx, "reuse", 0, strings.NewReader("world"), 5, sha256Hex("world")); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "world" {
+		t.Fatalf("replacement failed: %q %v", data, err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("temporary files leaked: %v %v", entries, err)
+	}
 }

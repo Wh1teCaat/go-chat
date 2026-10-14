@@ -9,3 +9,6 @@ configs/config.toml
 
 # 本地复盘文档，不入库
 REVIEW.local.md
+
+# 本地压测报告与原始结果，不入库
+loadtest/results/

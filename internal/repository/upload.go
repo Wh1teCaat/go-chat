@@ -7,10 +7,13 @@ import (
 
 	"chat_proj/internal/model"
 
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
 type UploadRepository interface {
+	LockUploadSession(ctx context.Context, uploadID string) (*model.UploadSession, error)
+	CompleteUploadSession(ctx context.Context, uploadID string, fileID uint) error
 	CreateUploadSession(ctx context.Context, session *model.UploadSession) error
 	GetUploadSession(ctx context.Context, uploadID string) (*model.UploadSession, error)
 	UpdateUploadSessionStatus(ctx context.Context, uploadID, status string) error
@@ -97,4 +100,24 @@ func (r *Repository) ListUploadChunks(ctx context.Context, uploadID string) ([]m
 // DeleteUploadChunks 删除某次上传的分片记录；磁盘分片由 storage.DeleteMultipart 负责清理。
 func (r *Repository) DeleteUploadChunks(ctx context.Context, uploadID string) error {
 	return r.db.WithContext(ctx).Where("upload_id = ?", uploadID).Delete(&model.UploadChunk{}).Error
+}
+
+// LockUploadSession must run inside a transaction. The no-op UPDATE takes a row
+// write lock on PostgreSQL and a write lock on SQLite before reading the session.
+// Every operation that changes part files must acquire this lock first.
+func (r *Repository) LockUploadSession(ctx context.Context, uploadID string) (*model.UploadSession, error) {
+	result := r.db.WithContext(ctx).Model(&model.UploadSession{}).Where("upload_id = ?", uploadID).
+		UpdateColumn("status", gorm.Expr("status"))
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return r.GetUploadSession(ctx, uploadID)
+}
+
+func (r *Repository) CompleteUploadSession(ctx context.Context, uploadID string, fileID uint) error {
+	return r.db.WithContext(ctx).Model(&model.UploadSession{}).Where("upload_id = ?", uploadID).
+		Updates(map[string]interface{}{"status": model.UploadSessionStatusCompleted, "file_id": fileID}).Error
 }

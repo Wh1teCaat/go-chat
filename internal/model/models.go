@@ -130,6 +130,7 @@ type File struct {
 }
 
 type UploadSession struct {
+	FileID       *uint     `gorm:"index" json:"file_id"`
 	ID           uint      `gorm:"primaryKey" json:"id"`
 	UploadID     string    `gorm:"size:64;uniqueIndex;not null" json:"upload_id"`
 	UserID       uint      `gorm:"index;not null" json:"user_id"`

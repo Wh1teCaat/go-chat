@@ -46,7 +46,7 @@ type Storage interface {
 	Save(ctx context.Context, input SaveObjectInput) (*StoredObject, error)
 	Open(ctx context.Context, key string) (io.ReadCloser, error)
 	OpenRange(ctx context.Context, key string, start, end int64) (io.ReadCloser, error)
-	SavePart(ctx context.Context, uploadID string, index int, reader io.Reader) (int64, error)
+	SavePart(ctx context.Context, uploadID string, index int, reader io.Reader, expectedSize int64, expectedSHA256 string) (int64, error)
 	CompleteMultipart(ctx context.Context, input CompleteMultipartInput) (*StoredObject, error)
 	DeleteMultipart(ctx context.Context, uploadID string) error
 	Delete(ctx context.Context, key string) error

@@ -18,7 +18,7 @@ import (
 
 const commandVersion = 1
 const maxPartitionBatch = 64
-const defaultConsumerWorkers = 4
+const defaultConsumerWorkers = 16
 
 // MessageCommand 是 WebSocket 入口与为其分配权威数据库序列的分区消费者之间的持久交接数据。
 type MessageCommand struct {

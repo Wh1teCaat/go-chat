@@ -12,6 +12,7 @@ type LoginUserOutput struct {
 
 type RefreshTokenInput struct {
 	RefreshToken string `json:"refreshToken" binding:"required"`
+	RequestID    string `json:"requestID,omitempty" binding:"omitempty,len=32,hexadecimal"`
 }
 
 type RegisterUserInput struct {
